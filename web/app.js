@@ -31,6 +31,7 @@ const controls = {
 const state = {
   sourceFile: null,
   uploadFile: null,
+  uploadMaskFile: null,
   beforeObjectUrl: "",
   afterDataUrl: "",
   lastDebugInfo: null
@@ -118,6 +119,7 @@ async function normalizeUploadImage(file) {
   const image = await loadImageFromObjectUrl(file);
   const squareSizes = [1024, 768, 512, 256];
   let blob = null;
+  let selectedSquareSize = null;
 
   for (const squareSize of squareSizes) {
     const scale = Math.min(1, squareSize / Math.max(image.width, image.height));
@@ -140,19 +142,34 @@ async function normalizeUploadImage(file) {
     const candidate = await canvasToPngBlob(canvas);
     if (candidate.size <= MAX_UPSTREAM_IMAGE_BYTES) {
       blob = candidate;
+      selectedSquareSize = squareSize;
       break;
     }
   }
 
-  if (!blob) {
+  if (!blob || !selectedSquareSize) {
     throw new Error("Prepared PNG is larger than 4 MB. Please use a smaller image.");
   }
+
+  const maskCanvas = document.createElement("canvas");
+  maskCanvas.width = selectedSquareSize;
+  maskCanvas.height = selectedSquareSize;
+  const maskContext = maskCanvas.getContext("2d");
+  if (!maskContext) {
+    throw new Error("Could not prepare edit mask.");
+  }
+  maskContext.clearRect(0, 0, selectedSquareSize, selectedSquareSize);
+  const maskBlob = await canvasToPngBlob(maskCanvas);
 
   const normalizedName = (file.name || "upload")
     .replace(/\.[a-z0-9]+$/i, "")
     .concat(".png");
+  const maskName = normalizedName.replace(/\.png$/i, "-mask.png");
 
-  return new File([blob], normalizedName, { type: "image/png" });
+  return {
+    imageFile: new File([blob], normalizedName, { type: "image/png" }),
+    maskFile: new File([maskBlob], maskName, { type: "image/png" })
+  };
 }
 
 async function onPhotoChange() {
@@ -165,6 +182,7 @@ async function onPhotoChange() {
     controls.beforeImage.src = "";
     state.sourceFile = null;
     state.uploadFile = null;
+    state.uploadMaskFile = null;
     return;
   }
 
@@ -191,10 +209,13 @@ async function onPhotoChange() {
 
   try {
     setStatus("Preparing image for generation...");
-    state.uploadFile = await normalizeUploadImage(file);
+    const normalized = await normalizeUploadImage(file);
+    state.uploadFile = normalized.imageFile;
+    state.uploadMaskFile = normalized.maskFile;
     setStatus("Photo loaded. Adjust settings and click Generate.");
   } catch (error) {
     state.uploadFile = null;
+    state.uploadMaskFile = null;
     const message = error instanceof Error ? error.message : "Image preparation failed.";
     setStatus(`Error: ${message}`);
   }
@@ -260,7 +281,7 @@ function parseJsonSafely(rawText) {
   }
 }
 
-function buildClientDebug(params, uploadFile) {
+function buildClientDebug(params, uploadFile, uploadMaskFile) {
   return {
     timestamp: new Date().toISOString(),
     endpoint: controls.apiUrl.value.trim(),
@@ -270,7 +291,10 @@ function buildClientDebug(params, uploadFile) {
       source_size: state.sourceFile?.size || null,
       sent_name: uploadFile?.name || null,
       sent_type: uploadFile?.type || null,
-      sent_size: uploadFile?.size || null
+      sent_size: uploadFile?.size || null,
+      mask_name: uploadMaskFile?.name || null,
+      mask_type: uploadMaskFile?.type || null,
+      mask_size: uploadMaskFile?.size || null
     },
     params
   };
@@ -292,11 +316,14 @@ async function generateImage() {
   const params = buildParams();
   const payload = new FormData();
   payload.append("image", uploadFile, uploadFile.name);
+  if (state.uploadMaskFile) {
+    payload.append("mask", state.uploadMaskFile, state.uploadMaskFile.name);
+  }
   payload.append("params", JSON.stringify(params));
 
   const debugEnabled = isDebugEnabled();
   if (debugEnabled) {
-    setDebugDetails({ stage: "request", client: buildClientDebug(params, uploadFile) });
+    setDebugDetails({ stage: "request", client: buildClientDebug(params, uploadFile, state.uploadMaskFile) });
   } else {
     clearDebugDetails();
   }

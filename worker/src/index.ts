@@ -69,6 +69,7 @@ export default {
       const formData = await request.formData();
       const image = formData.get("image");
       const rawParams = formData.get("params");
+      const mask = formData.get("mask");
 
       if (!(image instanceof File)) {
         return json(
@@ -80,7 +81,7 @@ export default {
 
       if (image.type !== "image/png") {
         return json(
-          withDebug({ error: { code: "INVALID_INPUT", message: "image must be image/png for this model" } }, debugEnabled, buildInputDebug(image, null)),
+          withDebug({ error: { code: "INVALID_INPUT", message: "image must be image/png for this model" } }, debugEnabled, buildInputDebug(image, null, null)),
           400,
           corsHeaders
         );
@@ -88,15 +89,41 @@ export default {
 
       if (image.size > MAX_IMAGE_BYTES) {
         return json(
-          withDebug({ error: { code: "INVALID_INPUT", message: "image exceeds 4MB" } }, debugEnabled, buildInputDebug(image, null)),
+          withDebug({ error: { code: "INVALID_INPUT", message: "image exceeds 4MB" } }, debugEnabled, buildInputDebug(image, null, null)),
           400,
           corsHeaders
         );
       }
 
+      let maskFile: File | null = null;
+      if (mask != null) {
+        if (!(mask instanceof File)) {
+          return json(
+            withDebug({ error: { code: "INVALID_INPUT", message: "mask must be a file when provided" } }, debugEnabled, buildInputDebug(image, null, null)),
+            400,
+            corsHeaders
+          );
+        }
+        if (mask.type !== "image/png") {
+          return json(
+            withDebug({ error: { code: "INVALID_INPUT", message: "mask must be image/png" } }, debugEnabled, buildInputDebug(image, null, mask)),
+            400,
+            corsHeaders
+          );
+        }
+        if (mask.size > MAX_IMAGE_BYTES) {
+          return json(
+            withDebug({ error: { code: "INVALID_INPUT", message: "mask exceeds 4MB" } }, debugEnabled, buildInputDebug(image, null, mask)),
+            400,
+            corsHeaders
+          );
+        }
+        maskFile = mask;
+      }
+
       if (typeof rawParams !== "string") {
         return json(
-          withDebug({ error: { code: "INVALID_INPUT", message: "params must be a JSON string" } }, debugEnabled, buildInputDebug(image, null)),
+          withDebug({ error: { code: "INVALID_INPUT", message: "params must be a JSON string" } }, debugEnabled, buildInputDebug(image, null, maskFile)),
           400,
           corsHeaders
         );
@@ -107,7 +134,7 @@ export default {
         parsed = JSON.parse(rawParams);
       } catch {
         return json(
-          withDebug({ error: { code: "INVALID_INPUT", message: "params must be valid JSON" } }, debugEnabled, buildInputDebug(image, null)),
+          withDebug({ error: { code: "INVALID_INPUT", message: "params must be valid JSON" } }, debugEnabled, buildInputDebug(image, null, maskFile)),
           400,
           corsHeaders
         );
@@ -115,12 +142,13 @@ export default {
 
       const params = validateParams(parsed);
       const prompt = buildPrompt(params);
-      const inputDebug = buildInputDebug(image, params);
+      const inputDebug = buildInputDebug(image, params, maskFile);
 
       const openAiForm = new FormData();
       openAiForm.append("model", OPENAI_EDITS_MODEL);
       openAiForm.append("prompt", prompt);
       openAiForm.append("image", image, image.name || "input.png");
+      if (maskFile) openAiForm.append("mask", maskFile, maskFile.name || "mask.png");
       openAiForm.append("size", "1024x1024");
       openAiForm.append("response_format", "b64_json");
 
@@ -331,7 +359,7 @@ function withDebug<T extends Record<string, unknown>>(body: T, enabled: boolean,
   return { ...body, debug };
 }
 
-function buildInputDebug(image: File, params: AgeParams | null): Record<string, unknown> {
+function buildInputDebug(image: File, params: AgeParams | null, mask: File | null): Record<string, unknown> {
   return {
     image: {
       name: image.name,
@@ -339,6 +367,14 @@ function buildInputDebug(image: File, params: AgeParams | null): Record<string, 
       size: image.size,
       last_modified: image.lastModified
     },
+    mask: mask
+      ? {
+          name: mask.name,
+          type: mask.type,
+          size: mask.size,
+          last_modified: mask.lastModified
+        }
+      : null,
     params,
     timestamp: new Date().toISOString()
   };
