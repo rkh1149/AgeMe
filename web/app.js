@@ -119,7 +119,6 @@ async function normalizeUploadImage(file) {
   const image = await loadImageFromObjectUrl(file);
   const squareSizes = [1024, 768, 512, 256];
   let blob = null;
-  let selectedSquareSize = null;
 
   for (const squareSize of squareSizes) {
     const scale = Math.min(1, squareSize / Math.max(image.width, image.height));
@@ -142,34 +141,77 @@ async function normalizeUploadImage(file) {
     const candidate = await canvasToPngBlob(canvas);
     if (candidate.size <= MAX_UPSTREAM_IMAGE_BYTES) {
       blob = candidate;
-      selectedSquareSize = squareSize;
       break;
     }
   }
 
-  if (!blob || !selectedSquareSize) {
+  if (!blob) {
     throw new Error("Prepared PNG is larger than 4 MB. Please use a smaller image.");
   }
-
-  const maskCanvas = document.createElement("canvas");
-  maskCanvas.width = selectedSquareSize;
-  maskCanvas.height = selectedSquareSize;
-  const maskContext = maskCanvas.getContext("2d");
-  if (!maskContext) {
-    throw new Error("Could not prepare edit mask.");
-  }
-  maskContext.clearRect(0, 0, selectedSquareSize, selectedSquareSize);
-  const maskBlob = await canvasToPngBlob(maskCanvas);
 
   const normalizedName = (file.name || "upload")
     .replace(/\.[a-z0-9]+$/i, "")
     .concat(".png");
-  const maskName = normalizedName.replace(/\.png$/i, "-mask.png");
 
-  return {
-    imageFile: new File([blob], normalizedName, { type: "image/png" }),
-    maskFile: new File([maskBlob], maskName, { type: "image/png" })
-  };
+  return new File([blob], normalizedName, { type: "image/png" });
+}
+
+function punchTransparentRect(ctx, x, y, w, h) {
+  ctx.clearRect(Math.floor(x), Math.floor(y), Math.ceil(w), Math.ceil(h));
+}
+
+function punchTransparentEllipse(ctx, cx, cy, rx, ry) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.clearRect(cx - rx - 2, cy - ry - 2, rx * 2 + 4, ry * 2 + 4);
+  ctx.restore();
+}
+
+async function buildEditMaskFile(uploadFile, params) {
+  const image = await loadImageFromObjectUrl(uploadFile);
+  const w = image.width;
+  const h = image.height;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    throw new Error("Could not build edit mask.");
+  }
+
+  // Opaque mask preserves pixels; transparent regions are editable.
+  ctx.fillStyle = "rgba(0, 0, 0, 1)";
+  ctx.fillRect(0, 0, w, h);
+
+  const eyeBandX = w * 0.24;
+  const eyeBandY = h * 0.33;
+  const eyeBandW = w * 0.52;
+  const eyeBandH = h * 0.2;
+  const faceCx = w * 0.5;
+  const faceCy = h * 0.5;
+  const faceRx = w * 0.28;
+  const faceRy = h * 0.34;
+  const hairCx = w * 0.5;
+  const hairCy = h * 0.24;
+  const hairRx = w * 0.26;
+  const hairRy = h * 0.16;
+
+  if (params.glasses === "remove" || params.glasses === "add") {
+    punchTransparentRect(ctx, eyeBandX, eyeBandY, eyeBandW, eyeBandH);
+  } else {
+    punchTransparentEllipse(ctx, faceCx, faceCy, faceRx, faceRy);
+  }
+
+  if (params.age_delta !== 0 || params.hair_color !== "preserve" || params.baldness > 0) {
+    punchTransparentEllipse(ctx, hairCx, hairCy, hairRx, hairRy);
+  }
+
+  const maskBlob = await canvasToPngBlob(canvas);
+  const maskName = uploadFile.name.replace(/\.png$/i, "-mask.png");
+  return new File([maskBlob], maskName, { type: "image/png" });
 }
 
 async function onPhotoChange() {
@@ -209,9 +251,8 @@ async function onPhotoChange() {
 
   try {
     setStatus("Preparing image for generation...");
-    const normalized = await normalizeUploadImage(file);
-    state.uploadFile = normalized.imageFile;
-    state.uploadMaskFile = normalized.maskFile;
+    state.uploadFile = await normalizeUploadImage(file);
+    state.uploadMaskFile = null;
     setStatus("Photo loaded. Adjust settings and click Generate.");
   } catch (error) {
     state.uploadFile = null;
@@ -314,17 +355,9 @@ async function generateImage() {
   }
 
   const params = buildParams();
-  const payload = new FormData();
-  payload.append("image", uploadFile, uploadFile.name);
-  if (state.uploadMaskFile) {
-    payload.append("mask", state.uploadMaskFile, state.uploadMaskFile.name);
-  }
-  payload.append("params", JSON.stringify(params));
 
   const debugEnabled = isDebugEnabled();
-  if (debugEnabled) {
-    setDebugDetails({ stage: "request", client: buildClientDebug(params, uploadFile, state.uploadMaskFile) });
-  } else {
+  if (!debugEnabled) {
     clearDebugDetails();
   }
 
@@ -332,6 +365,17 @@ async function generateImage() {
   controls.form.querySelector("button[type='submit']").disabled = true;
 
   try {
+    const maskFile = await buildEditMaskFile(uploadFile, params);
+    state.uploadMaskFile = maskFile;
+    const payload = new FormData();
+    payload.append("image", uploadFile, uploadFile.name);
+    payload.append("mask", maskFile, maskFile.name);
+    payload.append("params", JSON.stringify(params));
+
+    if (debugEnabled) {
+      setDebugDetails({ stage: "request", client: buildClientDebug(params, uploadFile, maskFile) });
+    }
+
     const headers = {};
     if (debugEnabled) {
       headers["x-ageme-debug"] = "1";

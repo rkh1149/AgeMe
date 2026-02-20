@@ -408,8 +408,14 @@ function buildPrompt(params: AgeParams): string {
     params.preserve_identity
       ? "Preserve identity and expression, but prioritize requested edits (age, glasses, hair settings) over strict pixel matching."
       : "Allow moderate identity changes while keeping a photorealistic result.",
-    "Do not add extra people, text, logos, or stylization. Keep it photorealistic."
+    "Do not add extra people, text, letters, words, logos, watermarks, or stylization. Keep it photorealistic."
   ];
+
+  if (params.glasses === "remove" && ageYears === 0) {
+    instructions.push(
+      "This is an eyewear-removal-only edit. Keep the same person, same face identity, same hairstyle, same pose, and same background."
+    );
+  }
 
   return instructions.join(" ");
 }
