@@ -3,4 +3,4 @@ main = "src/index.ts"
 compatibility_date = "2025-12-01"
 
 [vars]
-CORS_ORIGIN = "rkh1149.github.io"
+CORS_ORIGIN = "https://rkh1149.github.io"

@@ -332,8 +332,14 @@ async function generateImage() {
     setStatus("Done. Use slider to compare before and after.");
   } catch (error) {
     const message = error instanceof Error ? error.message : "Request failed.";
-    if (debugEnabled && !state.lastDebugInfo) {
-      setDebugDetails({ stage: "exception", message });
+    if (debugEnabled) {
+      setDebugDetails({
+        stage: "exception",
+        message,
+        endpoint: apiUrl,
+        hint: "If this is a fetch/CORS failure, no upstream JSON will be available.",
+        prior_debug: state.lastDebugInfo
+      });
     }
     setStatus(`Error: ${message}`);
   } finally {
