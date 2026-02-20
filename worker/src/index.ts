@@ -96,7 +96,7 @@ export default {
       const inputDebug = buildInputDebug(image, params);
 
       const openAiForm = new FormData();
-      openAiForm.append("model", "gpt-image-1-mini");
+      openAiForm.append("model", "dall-e-2");
       openAiForm.append("prompt", prompt);
       openAiForm.append("image", image, image.name || "input.png");
       openAiForm.append("size", "1024x1024");
@@ -167,7 +167,7 @@ export default {
             mime_type: mimeType,
             image_data_url: `data:${mimeType};base64,${cleanedBase64}`,
             meta: {
-              model: "gpt-image-1-mini",
+              model: "dall-e-2",
               quality: params.quality,
               elapsed_ms: Date.now() - started
             }
