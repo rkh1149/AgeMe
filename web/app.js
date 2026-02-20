@@ -101,7 +101,7 @@ function loadImageFromObjectUrl(file) {
   });
 }
 
-function canvasToJpegBlob(canvas, quality) {
+function canvasToPngBlob(canvas) {
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {
       if (!blob) {
@@ -109,7 +109,7 @@ function canvasToJpegBlob(canvas, quality) {
         return;
       }
       resolve(blob);
-    }, "image/jpeg", quality);
+    }, "image/png");
   });
 }
 
@@ -130,13 +130,13 @@ async function normalizeUploadImage(file) {
   }
 
   context.drawImage(image, 0, 0, targetWidth, targetHeight);
-  const blob = await canvasToJpegBlob(canvas, 0.92);
+  const blob = await canvasToPngBlob(canvas);
 
   const normalizedName = (file.name || "upload")
     .replace(/\.[a-z0-9]+$/i, "")
-    .concat(".jpg");
+    .concat(".png");
 
-  return new File([blob], normalizedName, { type: "image/jpeg" });
+  return new File([blob], normalizedName, { type: "image/png" });
 }
 
 async function onPhotoChange() {
