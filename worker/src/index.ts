@@ -99,7 +99,6 @@ export default {
       openAiForm.append("model", "gpt-image-1-mini");
       openAiForm.append("prompt", prompt);
       openAiForm.append("image", image, image.name || "input.png");
-      openAiForm.append("quality", params.quality);
       openAiForm.append("size", "1024x1024");
       openAiForm.append("response_format", "b64_json");
 
@@ -248,6 +247,7 @@ function buildPrompt(params: AgeParams): string {
     `Baldness level: ${params.baldness}/100.`,
     `Blemish correction level: ${params.blemish_fix}/100.`,
     `Skin texture shift: ${params.skin_texture} on a scale from -100 to 100.`,
+    `Requested output quality profile: ${params.quality}.`,
     params.preserve_identity
       ? "Preserve identity, facial geometry, expression, pose, and background as much as possible."
       : "Allow moderate identity changes while keeping a photorealistic result.",
