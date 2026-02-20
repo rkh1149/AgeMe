@@ -351,6 +351,8 @@ function buildPrompt(params: AgeParams): string {
   const instructions = [
     "Edit the provided portrait photo.",
     `Make the subject appear ${ageYears} years ${ageDirection} with intensity ${params.intensity.toFixed(2)}.`,
+    "The age transformation must be clearly visible and noticeable at first glance.",
+    "Apply realistic age cues (skin detail, facial contours, hair aging/de-aging cues) consistent with the requested direction.",
     `Hair color: ${params.hair_color}.`,
     `Glasses: ${params.glasses}.`,
     `Baldness level: ${params.baldness}/100.`,
@@ -358,7 +360,7 @@ function buildPrompt(params: AgeParams): string {
     `Skin texture shift: ${params.skin_texture} on a scale from -100 to 100.`,
     `Requested output quality profile: ${params.quality}.`,
     params.preserve_identity
-      ? "Preserve identity, facial geometry, expression, pose, and background as much as possible."
+      ? "Preserve identity and expression, but do not under-apply the requested age change."
       : "Allow moderate identity changes while keeping a photorealistic result.",
     "Do not add extra people, text, logos, or stylization. Keep it photorealistic."
   ];
