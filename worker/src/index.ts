@@ -134,11 +134,15 @@ export default {
         );
       }
 
+      const cleanedBase64 = firstImage.b64.replace(/\s+/g, "");
+      const mimeType = inferMimeTypeFromBase64(cleanedBase64, firstImage.mime);
+
       return json(
         {
           id: (openAiBody.id as string | undefined) ?? crypto.randomUUID(),
-          image_base64: firstImage.b64,
-          mime_type: firstImage.mime,
+          image_base64: cleanedBase64,
+          mime_type: mimeType,
+          image_data_url: `data:${mimeType};base64,${cleanedBase64}`,
           meta: {
             model: "gpt-image-1-mini",
             quality: params.quality,
@@ -259,4 +263,28 @@ function extractImagePayload(body: Record<string, unknown>): { b64: string; mime
 
   const mime = typeof first.mime_type === "string" ? first.mime_type : "image/png";
   return { b64, mime };
+}
+
+function inferMimeTypeFromBase64(base64: string, fallback: string): string {
+  try {
+    const cleaned = base64.replace(/\s+/g, "");
+    const bytes = Uint8Array.from(atob(cleaned.slice(0, 64)), (c) => c.charCodeAt(0));
+    if (bytes.length >= 4 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+      return "image/png";
+    }
+    if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+      return "image/jpeg";
+    }
+    if (
+      bytes.length >= 12 &&
+      bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+      bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50
+    ) {
+      return "image/webp";
+    }
+  } catch (_) {
+    // Fall through to fallback.
+  }
+
+  return typeof fallback === "string" && fallback.startsWith("image/") ? fallback : "image/png";
 }

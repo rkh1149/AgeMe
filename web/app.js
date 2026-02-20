@@ -101,6 +101,41 @@ function buildParams() {
   };
 }
 
+function normalizeImageDataUrl(body) {
+  if (typeof body.image_data_url === "string" && body.image_data_url.startsWith("data:image/")) {
+    return body.image_data_url;
+  }
+
+  let base64 = "";
+  if (typeof body.image_base64 === "string") {
+    base64 = body.image_base64.trim();
+  }
+
+  if (base64.startsWith("data:image/")) {
+    return base64;
+  }
+
+  if (!base64) {
+    throw new Error("No image data was returned by the API.");
+  }
+
+  const mime = typeof body.mime_type === "string" && body.mime_type.startsWith("image/")
+    ? body.mime_type
+    : "image/png";
+
+  // Remove whitespace/newlines which can break data URLs in some browsers.
+  const normalizedBase64 = base64.replace(/\s+/g, "");
+  return `data:${mime};base64,${normalizedBase64}`;
+}
+
+function setAfterImageSource(dataUrl) {
+  return new Promise((resolve, reject) => {
+    controls.afterImage.onload = () => resolve();
+    controls.afterImage.onerror = () => reject(new Error("Generated image could not be decoded by the browser."));
+    controls.afterImage.src = dataUrl;
+  });
+}
+
 async function generateImage() {
   if (!state.sourceFile) {
     setStatus("Please choose a photo first.");
@@ -132,11 +167,10 @@ async function generateImage() {
       throw new Error(body?.error?.message || "Generation failed.");
     }
 
-    const base64 = body.image_base64;
-    const mime = body.mime_type || "image/png";
-    state.afterDataUrl = `data:${mime};base64,${base64}`;
+    const dataUrl = normalizeImageDataUrl(body);
+    await setAfterImageSource(dataUrl);
+    state.afterDataUrl = dataUrl;
 
-    controls.afterImage.src = state.afterDataUrl;
     controls.downloadBtn.disabled = false;
     controls.regenerateBtn.disabled = false;
     setStatus("Done. Use slider to compare before and after.");
