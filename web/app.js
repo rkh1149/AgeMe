@@ -11,6 +11,7 @@ const controls = {
   skinTexture: document.getElementById("skinTexture"),
   quality: document.getElementById("quality"),
   preserveIdentity: document.getElementById("preserveIdentity"),
+  debugMode: document.getElementById("debugMode"),
   regenerateBtn: document.getElementById("regenerateBtn"),
   downloadBtn: document.getElementById("downloadBtn"),
   compareSlider: document.getElementById("compareSlider"),
@@ -18,6 +19,8 @@ const controls = {
   beforeImage: document.getElementById("beforeImage"),
   afterImage: document.getElementById("afterImage"),
   status: document.getElementById("status"),
+  debugPanel: document.getElementById("debugPanel"),
+  debugOutput: document.getElementById("debugOutput"),
   ageDeltaValue: document.getElementById("ageDeltaValue"),
   intensityValue: document.getElementById("intensityValue"),
   baldnessValue: document.getElementById("baldnessValue"),
@@ -29,8 +32,13 @@ const state = {
   sourceFile: null,
   uploadFile: null,
   beforeObjectUrl: "",
-  afterDataUrl: ""
+  afterDataUrl: "",
+  lastDebugInfo: null
 };
+
+function isDebugEnabled() {
+  return Boolean(controls.debugMode?.checked);
+}
 
 function setStatus(message) {
   controls.status.textContent = message;
@@ -46,6 +54,28 @@ function setSliderLabels() {
 
 function updateCompareMask() {
   controls.afterMask.style.width = `${controls.compareSlider.value}%`;
+}
+
+function setDebugDetails(value) {
+  state.lastDebugInfo = value;
+  if (!controls.debugOutput) {
+    return;
+  }
+
+  const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  controls.debugOutput.textContent = text;
+  if (controls.debugPanel) {
+    controls.debugPanel.open = true;
+  }
+}
+
+function clearDebugDetails() {
+  state.lastDebugInfo = null;
+  if (controls.debugOutput) {
+    controls.debugOutput.textContent = isDebugEnabled()
+      ? "Debug mode enabled. Run Generate to capture diagnostics."
+      : "Debug mode is off.";
+  }
 }
 
 function clearGeneratedState() {
@@ -112,6 +142,7 @@ async function normalizeUploadImage(file) {
 async function onPhotoChange() {
   const file = controls.photo.files?.[0];
   clearGeneratedState();
+  clearDebugDetails();
 
   if (!file) {
     setStatus("Select a photo to start.");
@@ -201,6 +232,34 @@ function setAfterImageSource(dataUrl) {
   });
 }
 
+function parseJsonSafely(rawText) {
+  if (!rawText) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(rawText);
+  } catch {
+    return { raw_text: rawText };
+  }
+}
+
+function buildClientDebug(params, uploadFile) {
+  return {
+    timestamp: new Date().toISOString(),
+    endpoint: controls.apiUrl.value.trim(),
+    upload: {
+      source_name: state.sourceFile?.name || null,
+      source_type: state.sourceFile?.type || null,
+      source_size: state.sourceFile?.size || null,
+      sent_name: uploadFile?.name || null,
+      sent_type: uploadFile?.type || null,
+      sent_size: uploadFile?.size || null
+    },
+    params
+  };
+}
+
 async function generateImage() {
   const uploadFile = state.uploadFile || state.sourceFile;
   if (!uploadFile) {
@@ -219,18 +278,49 @@ async function generateImage() {
   payload.append("image", uploadFile, uploadFile.name);
   payload.append("params", JSON.stringify(params));
 
+  const debugEnabled = isDebugEnabled();
+  if (debugEnabled) {
+    setDebugDetails({ stage: "request", client: buildClientDebug(params, uploadFile) });
+  } else {
+    clearDebugDetails();
+  }
+
   setStatus("Generating image...");
   controls.form.querySelector("button[type='submit']").disabled = true;
 
   try {
+    const headers = {};
+    if (debugEnabled) {
+      headers["x-ageme-debug"] = "1";
+    }
+
     const response = await fetch(apiUrl, {
       method: "POST",
+      headers,
       body: payload
     });
 
-    const body = await response.json();
+    const rawBody = await response.text();
+    const body = parseJsonSafely(rawBody);
+
     if (!response.ok) {
+      if (debugEnabled) {
+        setDebugDetails({
+          stage: "error-response",
+          http_status: response.status,
+          status_text: response.statusText,
+          body
+        });
+      }
       throw new Error(body?.error?.message || "Generation failed.");
+    }
+
+    if (debugEnabled && body?.debug) {
+      setDebugDetails({
+        stage: "success-response",
+        worker_debug: body.debug,
+        meta: body.meta || null
+      });
     }
 
     const dataUrl = normalizeImageDataUrl(body);
@@ -242,6 +332,9 @@ async function generateImage() {
     setStatus("Done. Use slider to compare before and after.");
   } catch (error) {
     const message = error instanceof Error ? error.message : "Request failed.";
+    if (debugEnabled && !state.lastDebugInfo) {
+      setDebugDetails({ stage: "exception", message });
+    }
     setStatus(`Error: ${message}`);
   } finally {
     controls.form.querySelector("button[type='submit']").disabled = false;
@@ -275,6 +368,8 @@ controls.intensity.addEventListener("input", setSliderLabels);
 controls.baldness.addEventListener("input", setSliderLabels);
 controls.blemishFix.addEventListener("input", setSliderLabels);
 controls.skinTexture.addEventListener("input", setSliderLabels);
+controls.debugMode.addEventListener("change", clearDebugDetails);
 
+clearDebugDetails();
 setSliderLabels();
 updateCompareMask();

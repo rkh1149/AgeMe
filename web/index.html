@@ -88,6 +88,11 @@
             Preserve Identity
           </label>
 
+          <label class="field checkbox">
+            <input id="debugMode" type="checkbox" />
+            Debug diagnostics
+          </label>
+
           <div class="actions">
             <button id="generateBtn" type="submit">Generate</button>
             <button id="regenerateBtn" type="button" disabled>Regenerate</button>
@@ -98,6 +103,11 @@
         <section class="panel preview-panel">
           <h2>Preview</h2>
           <p id="status" class="status">Select a photo to start.</p>
+
+          <details id="debugPanel" class="debug-panel">
+            <summary>Debug details</summary>
+            <pre id="debugOutput">Debug mode is off.</pre>
+          </details>
 
           <div class="compare-wrap">
             <div class="compare" id="compareBox">

@@ -24,6 +24,7 @@ const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const corsHeaders = buildCorsHeaders(env.CORS_ORIGIN ?? "*");
+    const debugEnabled = isDebugRequest(request);
 
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: corsHeaders });
@@ -31,13 +32,13 @@ export default {
 
     const url = new URL(request.url);
     if (request.method !== "POST" || url.pathname !== "/api/age-face") {
-      return json({ error: { code: "NOT_FOUND", message: "Route not found" } }, 404, corsHeaders);
+      return json(withDebug({ error: { code: "NOT_FOUND", message: "Route not found" } }, debugEnabled, null), 404, corsHeaders);
     }
 
     try {
       if (!env.OPENAI_API_KEY) {
         return json(
-          { error: { code: "CONFIG_ERROR", message: "Missing OPENAI_API_KEY" } },
+          withDebug({ error: { code: "CONFIG_ERROR", message: "Missing OPENAI_API_KEY" } }, debugEnabled, null),
           500,
           corsHeaders
         );
@@ -49,7 +50,7 @@ export default {
 
       if (!(image instanceof File)) {
         return json(
-          { error: { code: "INVALID_INPUT", message: "image is required" } },
+          withDebug({ error: { code: "INVALID_INPUT", message: "image is required" } }, debugEnabled, null),
           400,
           corsHeaders
         );
@@ -57,7 +58,7 @@ export default {
 
       if (!image.type.startsWith("image/")) {
         return json(
-          { error: { code: "INVALID_INPUT", message: "image must be a valid image type" } },
+          withDebug({ error: { code: "INVALID_INPUT", message: "image must be a valid image type" } }, debugEnabled, buildInputDebug(image, null)),
           400,
           corsHeaders
         );
@@ -65,7 +66,7 @@ export default {
 
       if (image.size > MAX_IMAGE_BYTES) {
         return json(
-          { error: { code: "INVALID_INPUT", message: "image exceeds 8MB" } },
+          withDebug({ error: { code: "INVALID_INPUT", message: "image exceeds 8MB" } }, debugEnabled, buildInputDebug(image, null)),
           400,
           corsHeaders
         );
@@ -73,7 +74,7 @@ export default {
 
       if (typeof rawParams !== "string") {
         return json(
-          { error: { code: "INVALID_INPUT", message: "params must be a JSON string" } },
+          withDebug({ error: { code: "INVALID_INPUT", message: "params must be a JSON string" } }, debugEnabled, buildInputDebug(image, null)),
           400,
           corsHeaders
         );
@@ -84,7 +85,7 @@ export default {
         parsed = JSON.parse(rawParams);
       } catch {
         return json(
-          { error: { code: "INVALID_INPUT", message: "params must be valid JSON" } },
+          withDebug({ error: { code: "INVALID_INPUT", message: "params must be valid JSON" } }, debugEnabled, buildInputDebug(image, null)),
           400,
           corsHeaders
         );
@@ -92,6 +93,7 @@ export default {
 
       const params = validateParams(parsed);
       const prompt = buildPrompt(params);
+      const inputDebug = buildInputDebug(image, params);
 
       const openAiForm = new FormData();
       openAiForm.append("model", "gpt-image-1-mini");
@@ -111,15 +113,29 @@ export default {
       });
 
       const openAiBody = (await openAiResponse.json()) as Record<string, unknown>;
+      const upstreamDebug = {
+        upstream_status: openAiResponse.status,
+        upstream_status_text: openAiResponse.statusText,
+        upstream_request_id: openAiResponse.headers.get("x-request-id"),
+        upstream_processing_ms: openAiResponse.headers.get("openai-processing-ms"),
+        upstream_error: extractOpenAiErrorDetails(openAiBody)
+      };
 
       if (!openAiResponse.ok) {
         return json(
-          {
-            error: {
-              code: "UPSTREAM_ERROR",
-              message: extractOpenAiError(openAiBody) ?? "OpenAI request failed"
+          withDebug(
+            {
+              error: {
+                code: "UPSTREAM_ERROR",
+                message: extractOpenAiError(openAiBody) ?? "OpenAI request failed"
+              }
+            },
+            debugEnabled,
+            {
+              input: inputDebug,
+              upstream: upstreamDebug
             }
-          },
+          ),
           openAiResponse.status,
           corsHeaders
         );
@@ -128,7 +144,14 @@ export default {
       const firstImage = extractImagePayload(openAiBody);
       if (!firstImage) {
         return json(
-          { error: { code: "UPSTREAM_ERROR", message: "No image output returned by model" } },
+          withDebug(
+            { error: { code: "UPSTREAM_ERROR", message: "No image output returned by model" } },
+            debugEnabled,
+            {
+              input: inputDebug,
+              upstream: upstreamDebug
+            }
+          ),
           502,
           corsHeaders
         );
@@ -138,24 +161,35 @@ export default {
       const mimeType = inferMimeTypeFromBase64(cleanedBase64, firstImage.mime);
 
       return json(
-        {
-          id: (openAiBody.id as string | undefined) ?? crypto.randomUUID(),
-          image_base64: cleanedBase64,
-          mime_type: mimeType,
-          image_data_url: `data:${mimeType};base64,${cleanedBase64}`,
-          meta: {
-            model: "gpt-image-1-mini",
-            quality: params.quality,
-            elapsed_ms: Date.now() - started
+        withDebug(
+          {
+            id: (openAiBody.id as string | undefined) ?? crypto.randomUUID(),
+            image_base64: cleanedBase64,
+            mime_type: mimeType,
+            image_data_url: `data:${mimeType};base64,${cleanedBase64}`,
+            meta: {
+              model: "gpt-image-1-mini",
+              quality: params.quality,
+              elapsed_ms: Date.now() - started
+            }
+          },
+          debugEnabled,
+          {
+            input: inputDebug,
+            upstream: upstreamDebug,
+            output: {
+              mime_type: mimeType,
+              base64_length: cleanedBase64.length
+            }
           }
-        },
+        ),
         200,
         corsHeaders
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
       return json(
-        { error: { code: "INTERNAL_ERROR", message } },
+        withDebug({ error: { code: "INTERNAL_ERROR", message } }, debugEnabled, null),
         500,
         corsHeaders
       );
@@ -173,9 +207,33 @@ function buildCorsHeaders(allowedOrigin: string): Headers {
   const headers = new Headers();
   headers.set("access-control-allow-origin", allowedOrigin);
   headers.set("access-control-allow-methods", "POST, OPTIONS");
-  headers.set("access-control-allow-headers", "content-type, authorization");
+  headers.set("access-control-allow-headers", "content-type, authorization, x-ageme-debug");
   headers.set("access-control-max-age", "86400");
   return headers;
+}
+
+function isDebugRequest(request: Request): boolean {
+  return request.headers.get("x-ageme-debug") === "1";
+}
+
+function withDebug<T extends Record<string, unknown>>(body: T, enabled: boolean, debug: unknown): T & { debug?: unknown } {
+  if (!enabled) {
+    return body;
+  }
+  return { ...body, debug };
+}
+
+function buildInputDebug(image: File, params: AgeParams | null): Record<string, unknown> {
+  return {
+    image: {
+      name: image.name,
+      type: image.type,
+      size: image.size,
+      last_modified: image.lastModified
+    },
+    params,
+    timestamp: new Date().toISOString()
+  };
 }
 
 function buildPrompt(params: AgeParams): string {
@@ -247,6 +305,20 @@ function extractOpenAiError(body: Record<string, unknown>): string | null {
   const errorObj = body.error as Record<string, unknown> | undefined;
   const message = errorObj?.message;
   return typeof message === "string" ? message : null;
+}
+
+function extractOpenAiErrorDetails(body: Record<string, unknown>): Record<string, unknown> | null {
+  const errorObj = body.error as Record<string, unknown> | undefined;
+  if (!errorObj || typeof errorObj !== "object") {
+    return null;
+  }
+
+  return {
+    message: typeof errorObj.message === "string" ? errorObj.message : null,
+    type: typeof errorObj.type === "string" ? errorObj.type : null,
+    code: typeof errorObj.code === "string" ? errorObj.code : null,
+    param: typeof errorObj.param === "string" ? errorObj.param : null
+  };
 }
 
 function extractImagePayload(body: Record<string, unknown>): { b64: string; mime: string } | null {
