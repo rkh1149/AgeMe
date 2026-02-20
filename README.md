@@ -30,11 +30,24 @@ Files:
    - `wrangler deploy`
 
 The worker exposes:
+- `GET /api/capabilities`
 - `POST /api/age-face`
-- `OPTIONS /api/age-face`
+- `OPTIONS` (CORS preflight)
 
 Set the frontend API Endpoint field to your deployed worker URL, for example:
 - `https://ageme-worker.<your-subdomain>.workers.dev/api/age-face`
+
+### Capability probe endpoint
+
+You can inspect current backend/upstream constraints with:
+
+- `GET /api/capabilities` (no upstream call, no model cost)
+- `GET /api/capabilities?probe=1` (runs a live OpenAI compatibility probe; may incur image API cost)
+
+Example:
+
+- `https://ageme-worker.<your-subdomain>.workers.dev/api/capabilities`
+- `https://ageme-worker.<your-subdomain>.workers.dev/api/capabilities?probe=1`
 
 ## Request schema
 

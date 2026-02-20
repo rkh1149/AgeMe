@@ -20,6 +20,10 @@ interface AgeParams {
 }
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const OPENAI_IMAGE_EDITS_URL = "https://api.openai.com/v1/images/edits";
+const OPENAI_EDITS_MODEL = "dall-e-2";
+const PROBE_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Zb+0AAAAASUVORK5CYII=";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -31,8 +35,26 @@ export default {
     }
 
     const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === "/api/capabilities") {
+      return handleCapabilitiesRequest(url, env, corsHeaders);
+    }
+
     if (request.method !== "POST" || url.pathname !== "/api/age-face") {
-      return json(withDebug({ error: { code: "NOT_FOUND", message: "Route not found" } }, debugEnabled, null), 404, corsHeaders);
+      return json(
+        withDebug(
+          {
+            error: { code: "NOT_FOUND", message: "Route not found" },
+            available_routes: [
+              { method: "GET", path: "/api/capabilities" },
+              { method: "POST", path: "/api/age-face" }
+            ]
+          },
+          debugEnabled,
+          null
+        ),
+        404,
+        corsHeaders
+      );
     }
 
     try {
@@ -96,14 +118,14 @@ export default {
       const inputDebug = buildInputDebug(image, params);
 
       const openAiForm = new FormData();
-      openAiForm.append("model", "dall-e-2");
+      openAiForm.append("model", OPENAI_EDITS_MODEL);
       openAiForm.append("prompt", prompt);
       openAiForm.append("image", image, image.name || "input.png");
       openAiForm.append("size", "1024x1024");
       openAiForm.append("response_format", "b64_json");
 
       const started = Date.now();
-      const openAiResponse = await fetch("https://api.openai.com/v1/images/edits", {
+      const openAiResponse = await fetch(OPENAI_IMAGE_EDITS_URL, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${env.OPENAI_API_KEY}`
@@ -167,7 +189,7 @@ export default {
             mime_type: mimeType,
             image_data_url: `data:${mimeType};base64,${cleanedBase64}`,
             meta: {
-              model: "dall-e-2",
+              model: OPENAI_EDITS_MODEL,
               quality: params.quality,
               elapsed_ms: Date.now() - started
             }
@@ -205,10 +227,97 @@ function json(body: unknown, status: number, corsHeaders: Headers): Response {
 function buildCorsHeaders(allowedOrigin: string): Headers {
   const headers = new Headers();
   headers.set("access-control-allow-origin", allowedOrigin);
-  headers.set("access-control-allow-methods", "POST, OPTIONS");
+  headers.set("access-control-allow-methods", "GET, POST, OPTIONS");
   headers.set("access-control-allow-headers", "content-type, authorization, x-ageme-debug");
   headers.set("access-control-max-age", "86400");
   return headers;
+}
+
+async function handleCapabilitiesRequest(url: URL, env: Env, corsHeaders: Headers): Promise<Response> {
+  const shouldProbe = ["1", "true", "yes"].includes((url.searchParams.get("probe") || "").toLowerCase());
+
+  const body: Record<string, unknown> = {
+    api: {
+      routes: [
+        { method: "GET", path: "/api/capabilities" },
+        { method: "POST", path: "/api/age-face" }
+      ]
+    },
+    openai: {
+      endpoint: OPENAI_IMAGE_EDITS_URL,
+      model: OPENAI_EDITS_MODEL
+    },
+    constraints: {
+      supported_input_mime_types: ["image/png"],
+      accepted_params_for_upstream: ["model", "prompt", "image", "size", "response_format"],
+      rejected_param_examples: ["quality"],
+      max_image_bytes: MAX_IMAGE_BYTES
+    },
+    probe: {
+      available: true,
+      executed: false,
+      note: "Use ?probe=1 for a live upstream compatibility check (may incur image generation cost)."
+    }
+  };
+
+  if (!shouldProbe) {
+    return json(body, 200, corsHeaders);
+  }
+
+  if (!env.OPENAI_API_KEY) {
+    body.probe = {
+      available: true,
+      executed: false,
+      ok: false,
+      error: "Missing OPENAI_API_KEY"
+    };
+    return json(body, 500, corsHeaders);
+  }
+
+  const started = Date.now();
+  const probeBytes = Uint8Array.from(atob(PROBE_PNG_BASE64), (c) => c.charCodeAt(0));
+  const probeFile = new File([probeBytes], "probe.png", { type: "image/png" });
+
+  const probeForm = new FormData();
+  probeForm.append("model", OPENAI_EDITS_MODEL);
+  probeForm.append("prompt", "Slightly adjust brightness while preserving the same tiny image.");
+  probeForm.append("image", probeFile, "probe.png");
+  probeForm.append("size", "256x256");
+  probeForm.append("response_format", "b64_json");
+
+  const probeResponse = await fetch(OPENAI_IMAGE_EDITS_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.OPENAI_API_KEY}`
+    },
+    body: probeForm
+  });
+
+  const probeRaw = (await probeResponse.json()) as Record<string, unknown>;
+  const probeImage = extractImagePayload(probeRaw);
+
+  body.probe = {
+    available: true,
+    executed: true,
+    ok: probeResponse.ok,
+    elapsed_ms: Date.now() - started,
+    upstream_status: probeResponse.status,
+    upstream_status_text: probeResponse.statusText,
+    upstream_request_id: probeResponse.headers.get("x-request-id"),
+    upstream_processing_ms: probeResponse.headers.get("openai-processing-ms"),
+    upstream_error: extractOpenAiErrorDetails(probeRaw),
+    output: probeImage
+      ? {
+          returned_image: true,
+          mime_type: inferMimeTypeFromBase64(probeImage.b64, probeImage.mime),
+          base64_length: probeImage.b64.length
+        }
+      : {
+          returned_image: false
+        }
+  };
+
+  return json(body, probeResponse.ok ? 200 : 502, corsHeaders);
 }
 
 function isDebugRequest(request: Request): boolean {
