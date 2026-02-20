@@ -1,0 +1,6 @@
+name = "ageme-worker"
+main = "src/index.ts"
+compatibility_date = "2025-12-01"
+
+[vars]
+CORS_ORIGIN = "rkh1149.github.io"

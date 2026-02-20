@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AgeMe Studio</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="hero">
+        <h1>AgeMe Studio</h1>
+        <p>Upload a face photo, set an age target, and tune visual details before generating.</p>
+      </header>
+
+      <section class="layout">
+        <form id="controls" class="panel" autocomplete="off">
+          <h2>Controls</h2>
+
+          <label class="field">
+            API Endpoint
+            <input id="apiUrl" type="url" placeholder="https://your-worker.workers.dev/api/age-face" required />
+          </label>
+
+          <label class="field">
+            Photo
+            <input id="photo" type="file" accept="image/png,image/jpeg,image/webp" required />
+          </label>
+
+          <label class="field">
+            Age Delta (<span id="ageDeltaValue">15</span>)
+            <input id="ageDelta" type="range" min="-40" max="40" value="15" />
+          </label>
+
+          <label class="field">
+            Intensity (<span id="intensityValue">0.60</span>)
+            <input id="intensity" type="range" min="0" max="1" step="0.01" value="0.6" />
+          </label>
+
+          <label class="field">
+            Hair Color
+            <select id="hairColor">
+              <option value="preserve">Preserve</option>
+              <option value="black">Black</option>
+              <option value="brown">Brown</option>
+              <option value="blonde">Blonde</option>
+              <option value="red">Red</option>
+              <option value="gray">Gray</option>
+              <option value="white">White</option>
+            </select>
+          </label>
+
+          <label class="field">
+            Glasses
+            <select id="glasses">
+              <option value="preserve">Preserve</option>
+              <option value="add">Add</option>
+              <option value="remove">Remove</option>
+            </select>
+          </label>
+
+          <label class="field">
+            Baldness (<span id="baldnessValue">0</span>)
+            <input id="baldness" type="range" min="0" max="100" value="0" />
+          </label>
+
+          <label class="field">
+            Blemish Fix (<span id="blemishFixValue">30</span>)
+            <input id="blemishFix" type="range" min="0" max="100" value="30" />
+          </label>
+
+          <label class="field">
+            Skin Texture (<span id="skinTextureValue">20</span>)
+            <input id="skinTexture" type="range" min="-100" max="100" value="20" />
+          </label>
+
+          <label class="field">
+            Quality
+            <select id="quality">
+              <option value="low">Low</option>
+              <option value="medium" selected>Medium</option>
+              <option value="high">High</option>
+            </select>
+          </label>
+
+          <label class="field checkbox">
+            <input id="preserveIdentity" type="checkbox" checked />
+            Preserve Identity
+          </label>
+
+          <div class="actions">
+            <button id="generateBtn" type="submit">Generate</button>
+            <button id="regenerateBtn" type="button" disabled>Regenerate</button>
+            <button id="downloadBtn" type="button" disabled>Download</button>
+          </div>
+        </form>
+
+        <section class="panel preview-panel">
+          <h2>Preview</h2>
+          <p id="status" class="status">Select a photo to start.</p>
+
+          <div class="compare-wrap">
+            <div class="compare" id="compareBox">
+              <img id="beforeImage" alt="Before" />
+              <div class="after-mask" id="afterMask">
+                <img id="afterImage" alt="After" />
+              </div>
+            </div>
+            <input id="compareSlider" type="range" min="0" max="100" value="50" />
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>
