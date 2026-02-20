@@ -383,20 +383,30 @@ function buildInputDebug(image: File, params: AgeParams | null, mask: File | nul
 function buildPrompt(params: AgeParams): string {
   const ageDirection = params.age_delta >= 0 ? "older" : "younger";
   const ageYears = Math.abs(params.age_delta);
+  const glassesInstruction =
+    params.glasses === "remove"
+      ? "Remove all glasses completely. Do not show frames, lenses, sunglasses, or reflections from eyewear."
+      : params.glasses === "add"
+        ? "Add realistic eyeglasses that fit the subject naturally."
+        : "If glasses are present, preserve their current appearance.";
+  const hairColorInstruction =
+    params.hair_color === "preserve"
+      ? "Preserve current hair color."
+      : `Set hair color clearly to ${params.hair_color}.`;
 
   const instructions = [
     "Edit the provided portrait photo.",
     `Make the subject appear ${ageYears} years ${ageDirection} with intensity ${params.intensity.toFixed(2)}.`,
     "The age transformation must be clearly visible and noticeable at first glance.",
     "Apply realistic age cues (skin detail, facial contours, hair aging/de-aging cues) consistent with the requested direction.",
-    `Hair color: ${params.hair_color}.`,
-    `Glasses: ${params.glasses}.`,
+    hairColorInstruction,
+    glassesInstruction,
     `Baldness level: ${params.baldness}/100.`,
     `Blemish correction level: ${params.blemish_fix}/100.`,
     `Skin texture shift: ${params.skin_texture} on a scale from -100 to 100.`,
     `Requested output quality profile: ${params.quality}.`,
     params.preserve_identity
-      ? "Preserve identity and expression, but do not under-apply the requested age change."
+      ? "Preserve identity and expression, but prioritize requested edits (age, glasses, hair settings) over strict pixel matching."
       : "Allow moderate identity changes while keeping a photorealistic result.",
     "Do not add extra people, text, logos, or stylization. Keep it photorealistic."
   ];
