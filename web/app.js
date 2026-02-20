@@ -27,6 +27,7 @@ const controls = {
 
 const state = {
   sourceFile: null,
+  uploadFile: null,
   beforeObjectUrl: "",
   afterDataUrl: ""
 };
@@ -54,13 +55,69 @@ function clearGeneratedState() {
   controls.regenerateBtn.disabled = true;
 }
 
-function onPhotoChange() {
+function loadImageFromObjectUrl(file) {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Could not decode uploaded image."));
+    };
+    image.src = objectUrl;
+  });
+}
+
+function canvasToJpegBlob(canvas, quality) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error("Failed to re-encode image for upload."));
+        return;
+      }
+      resolve(blob);
+    }, "image/jpeg", quality);
+  });
+}
+
+async function normalizeUploadImage(file) {
+  const image = await loadImageFromObjectUrl(file);
+  const maxEdge = 2048;
+  const scale = Math.min(1, maxEdge / Math.max(image.width, image.height));
+  const targetWidth = Math.max(1, Math.round(image.width * scale));
+  const targetHeight = Math.max(1, Math.round(image.height * scale));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("Could not prepare image for upload.");
+  }
+
+  context.drawImage(image, 0, 0, targetWidth, targetHeight);
+  const blob = await canvasToJpegBlob(canvas, 0.92);
+
+  const normalizedName = (file.name || "upload")
+    .replace(/\.[a-z0-9]+$/i, "")
+    .concat(".jpg");
+
+  return new File([blob], normalizedName, { type: "image/jpeg" });
+}
+
+async function onPhotoChange() {
   const file = controls.photo.files?.[0];
   clearGeneratedState();
 
   if (!file) {
     setStatus("Select a photo to start.");
     controls.beforeImage.src = "";
+    state.sourceFile = null;
+    state.uploadFile = null;
     return;
   }
 
@@ -84,7 +141,16 @@ function onPhotoChange() {
   state.beforeObjectUrl = URL.createObjectURL(file);
   controls.beforeImage.src = state.beforeObjectUrl;
   controls.afterImage.src = state.beforeObjectUrl;
-  setStatus("Photo loaded. Adjust settings and click Generate.");
+
+  try {
+    setStatus("Preparing image for generation...");
+    state.uploadFile = await normalizeUploadImage(file);
+    setStatus("Photo loaded. Adjust settings and click Generate.");
+  } catch (error) {
+    state.uploadFile = file;
+    const message = error instanceof Error ? error.message : "Image preparation failed.";
+    setStatus(`Photo loaded. Using original upload (${message})`);
+  }
 }
 
 function buildParams() {
@@ -123,7 +189,6 @@ function normalizeImageDataUrl(body) {
     ? body.mime_type
     : "image/png";
 
-  // Remove whitespace/newlines which can break data URLs in some browsers.
   const normalizedBase64 = base64.replace(/\s+/g, "");
   return `data:${mime};base64,${normalizedBase64}`;
 }
@@ -137,7 +202,8 @@ function setAfterImageSource(dataUrl) {
 }
 
 async function generateImage() {
-  if (!state.sourceFile) {
+  const uploadFile = state.uploadFile || state.sourceFile;
+  if (!uploadFile) {
     setStatus("Please choose a photo first.");
     return;
   }
@@ -150,7 +216,7 @@ async function generateImage() {
 
   const params = buildParams();
   const payload = new FormData();
-  payload.append("image", state.sourceFile, state.sourceFile.name);
+  payload.append("image", uploadFile, uploadFile.name);
   payload.append("params", JSON.stringify(params));
 
   setStatus("Generating image...");
