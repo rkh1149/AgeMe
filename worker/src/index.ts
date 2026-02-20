@@ -19,7 +19,7 @@ interface AgeParams {
   preserve_identity: boolean;
 }
 
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const OPENAI_IMAGE_EDITS_URL = "https://api.openai.com/v1/images/edits";
 const OPENAI_EDITS_MODEL = "dall-e-2";
 const PROBE_PNG_BASE64 =
@@ -78,9 +78,9 @@ export default {
         );
       }
 
-      if (!image.type.startsWith("image/")) {
+      if (image.type !== "image/png") {
         return json(
-          withDebug({ error: { code: "INVALID_INPUT", message: "image must be a valid image type" } }, debugEnabled, buildInputDebug(image, null)),
+          withDebug({ error: { code: "INVALID_INPUT", message: "image must be image/png for this model" } }, debugEnabled, buildInputDebug(image, null)),
           400,
           corsHeaders
         );
@@ -88,7 +88,7 @@ export default {
 
       if (image.size > MAX_IMAGE_BYTES) {
         return json(
-          withDebug({ error: { code: "INVALID_INPUT", message: "image exceeds 8MB" } }, debugEnabled, buildInputDebug(image, null)),
+          withDebug({ error: { code: "INVALID_INPUT", message: "image exceeds 4MB" } }, debugEnabled, buildInputDebug(image, null)),
           400,
           corsHeaders
         );

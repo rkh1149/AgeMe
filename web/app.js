@@ -35,6 +35,7 @@ const state = {
   afterDataUrl: "",
   lastDebugInfo: null
 };
+const MAX_UPSTREAM_IMAGE_BYTES = 4 * 1024 * 1024;
 
 function isDebugEnabled() {
   return Boolean(controls.debugMode?.checked);
@@ -115,22 +116,37 @@ function canvasToPngBlob(canvas) {
 
 async function normalizeUploadImage(file) {
   const image = await loadImageFromObjectUrl(file);
-  const maxEdge = 2048;
-  const scale = Math.min(1, maxEdge / Math.max(image.width, image.height));
-  const targetWidth = Math.max(1, Math.round(image.width * scale));
-  const targetHeight = Math.max(1, Math.round(image.height * scale));
+  const squareSizes = [1024, 768, 512, 256];
+  let blob = null;
 
-  const canvas = document.createElement("canvas");
-  canvas.width = targetWidth;
-  canvas.height = targetHeight;
+  for (const squareSize of squareSizes) {
+    const scale = Math.min(1, squareSize / Math.max(image.width, image.height));
+    const drawWidth = Math.max(1, Math.round(image.width * scale));
+    const drawHeight = Math.max(1, Math.round(image.height * scale));
+    const offsetX = Math.floor((squareSize - drawWidth) / 2);
+    const offsetY = Math.floor((squareSize - drawHeight) / 2);
 
-  const context = canvas.getContext("2d");
-  if (!context) {
-    throw new Error("Could not prepare image for upload.");
+    const canvas = document.createElement("canvas");
+    canvas.width = squareSize;
+    canvas.height = squareSize;
+
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("Could not prepare image for upload.");
+    }
+
+    context.clearRect(0, 0, squareSize, squareSize);
+    context.drawImage(image, offsetX, offsetY, drawWidth, drawHeight);
+    const candidate = await canvasToPngBlob(canvas);
+    if (candidate.size <= MAX_UPSTREAM_IMAGE_BYTES) {
+      blob = candidate;
+      break;
+    }
   }
 
-  context.drawImage(image, 0, 0, targetWidth, targetHeight);
-  const blob = await canvasToPngBlob(canvas);
+  if (!blob) {
+    throw new Error("Prepared PNG is larger than 4 MB. Please use a smaller image.");
+  }
 
   const normalizedName = (file.name || "upload")
     .replace(/\.[a-z0-9]+$/i, "")
@@ -178,9 +194,9 @@ async function onPhotoChange() {
     state.uploadFile = await normalizeUploadImage(file);
     setStatus("Photo loaded. Adjust settings and click Generate.");
   } catch (error) {
-    state.uploadFile = file;
+    state.uploadFile = null;
     const message = error instanceof Error ? error.message : "Image preparation failed.";
-    setStatus(`Photo loaded. Using original upload (${message})`);
+    setStatus(`Error: ${message}`);
   }
 }
 
