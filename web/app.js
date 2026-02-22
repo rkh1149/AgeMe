@@ -11,6 +11,8 @@ const controls = {
   skinTexture: document.getElementById("skinTexture"),
   quality: document.getElementById("quality"),
   preserveIdentity: document.getElementById("preserveIdentity"),
+  inputPrompt: document.getElementById("inputPrompt"),
+  outputPrompt: document.getElementById("outputPrompt"),
   debugMode: document.getElementById("debugMode"),
   regenerateBtn: document.getElementById("regenerateBtn"),
   downloadBtn: document.getElementById("downloadBtn"),
@@ -263,6 +265,7 @@ async function onPhotoChange() {
 }
 
 function buildParams() {
+  const promptOverride = controls.inputPrompt.value.trim();
   return {
     age_delta: Number(controls.ageDelta.value),
     intensity: Number(controls.intensity.value),
@@ -272,7 +275,8 @@ function buildParams() {
     blemish_fix: Number(controls.blemishFix.value),
     skin_texture: Number(controls.skinTexture.value),
     quality: controls.quality.value,
-    preserve_identity: controls.preserveIdentity.checked
+    preserve_identity: controls.preserveIdentity.checked,
+    prompt_override: promptOverride || null
   };
 }
 
@@ -413,6 +417,9 @@ async function generateImage() {
     const dataUrl = normalizeImageDataUrl(body);
     await setAfterImageSource(dataUrl);
     state.afterDataUrl = dataUrl;
+    controls.outputPrompt.value = typeof body.prompt_used === "string"
+      ? body.prompt_used
+      : (controls.inputPrompt.value.trim() || "");
 
     controls.downloadBtn.disabled = false;
     controls.regenerateBtn.disabled = false;

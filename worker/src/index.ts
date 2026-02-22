@@ -17,6 +17,7 @@ interface AgeParams {
   skin_texture: number;
   quality: Quality;
   preserve_identity: boolean;
+  prompt_override: string | null;
 }
 
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
@@ -141,7 +142,7 @@ export default {
       }
 
       const params = validateParams(parsed);
-      const prompt = buildPrompt(params);
+      const prompt = resolvePrompt(params);
       const inputDebug = buildInputDebug(image, params, maskFile);
 
       const openAiForm = new FormData();
@@ -220,7 +221,8 @@ export default {
               model: OPENAI_EDITS_MODEL,
               quality: params.quality,
               elapsed_ms: Date.now() - started
-            }
+            },
+            prompt_used: prompt
           },
           debugEnabled,
           {
@@ -436,7 +438,8 @@ function validateParams(parsed: unknown): AgeParams {
     blemish_fix: numberInRange(obj.blemish_fix, 0, 100, "blemish_fix"),
     skin_texture: numberInRange(obj.skin_texture, -100, 100, "skin_texture"),
     quality: enumValue(obj.quality, ["low", "medium", "high"], "quality"),
-    preserve_identity: booleanValue(obj.preserve_identity, "preserve_identity")
+    preserve_identity: booleanValue(obj.preserve_identity, "preserve_identity"),
+    prompt_override: optionalString(obj.prompt_override, "prompt_override")
   };
 }
 
@@ -462,6 +465,22 @@ function enumValue<T extends string>(value: unknown, allowed: T[], key: string):
     throw new Error(`${key} is invalid`);
   }
   return value as T;
+}
+
+function optionalString(value: unknown, key: string): string | null {
+  if (value == null) return null;
+  if (typeof value !== "string") {
+    throw new Error(`${key} must be string or null`);
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function resolvePrompt(params: AgeParams): string {
+  if (params.prompt_override) {
+    return params.prompt_override;
+  }
+  return buildPrompt(params);
 }
 
 function extractOpenAiError(body: Record<string, unknown>): string | null {
