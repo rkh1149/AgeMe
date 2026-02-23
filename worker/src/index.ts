@@ -1,11 +1,13 @@
 interface Env {
   OPENAI_API_KEY: string;
   CORS_ORIGIN?: string;
+  DEFAULT_PROVIDER?: string;
 }
 
 type Quality = "low" | "medium" | "high";
 type HairColor = "preserve" | "black" | "brown" | "blonde" | "red" | "gray" | "white";
 type Glasses = "preserve" | "add" | "remove";
+type ProviderId = "dalle2" | "gptimage1";
 
 interface AgeParams {
   age_delta: number;
@@ -16,15 +18,35 @@ interface AgeParams {
   blemish_fix: number;
   skin_texture: number;
   quality: Quality;
+  provider: ProviderId;
   preserve_identity: boolean;
   prompt_override: string | null;
 }
 
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const OPENAI_IMAGE_EDITS_URL = "https://api.openai.com/v1/images/edits";
-const OPENAI_EDITS_MODEL = "dall-e-2";
 const PROBE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Zb+0AAAAASUVORK5CYII=";
+const PROVIDERS: Record<ProviderId, { id: ProviderId; label: string; model: string; endpoint: string; inputMimeTypes: string[]; maxImageBytes: number; supportsMask: boolean }> = {
+  dalle2: {
+    id: "dalle2",
+    label: "DALL-E 2 (edits)",
+    model: "dall-e-2",
+    endpoint: OPENAI_IMAGE_EDITS_URL,
+    inputMimeTypes: ["image/png"],
+    maxImageBytes: 4 * 1024 * 1024,
+    supportsMask: true
+  },
+  gptimage1: {
+    id: "gptimage1",
+    label: "GPT Image 1 (edits)",
+    model: "gpt-image-1",
+    endpoint: OPENAI_IMAGE_EDITS_URL,
+    inputMimeTypes: ["image/png"],
+    maxImageBytes: 4 * 1024 * 1024,
+    supportsMask: true
+  }
+};
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -80,17 +102,45 @@ export default {
         );
       }
 
-      if (image.type !== "image/png") {
+      let params: AgeParams;
+      try {
+        const rawParsed = parseJsonSafe(rawParams);
+        params = validateParams(rawParsed, env);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Invalid params";
         return json(
-          withDebug({ error: { code: "INVALID_INPUT", message: "image must be image/png for this model" } }, debugEnabled, buildInputDebug(image, null, null)),
+          withDebug(
+            { error: { code: "INVALID_INPUT", message } },
+            debugEnabled,
+            buildInputDebug(image, null, null)
+          ),
+          400,
+          corsHeaders
+        );
+      }
+      const provider = getProvider(params.provider);
+
+      if (!provider.inputMimeTypes.includes(image.type)) {
+        return json(
+          withDebug(
+            {
+              error: { code: "INVALID_INPUT", message: `image must be one of: ${provider.inputMimeTypes.join(", ")}` }
+            },
+            debugEnabled,
+            buildInputDebug(image, null, null)
+          ),
           400,
           corsHeaders
         );
       }
 
-      if (image.size > MAX_IMAGE_BYTES) {
+      if (image.size > provider.maxImageBytes) {
         return json(
-          withDebug({ error: { code: "INVALID_INPUT", message: "image exceeds 4MB" } }, debugEnabled, buildInputDebug(image, null, null)),
+          withDebug(
+            { error: { code: "INVALID_INPUT", message: `image exceeds ${Math.floor(provider.maxImageBytes / (1024 * 1024))}MB` } },
+            debugEnabled,
+            buildInputDebug(image, null, null)
+          ),
           400,
           corsHeaders
         );
@@ -105,6 +155,13 @@ export default {
             corsHeaders
           );
         }
+        if (!provider.supportsMask) {
+          return json(
+            withDebug({ error: { code: "INVALID_INPUT", message: `mask is not supported by provider ${provider.id}` } }, debugEnabled, buildInputDebug(image, null, mask)),
+            400,
+            corsHeaders
+          );
+        }
         if (mask.type !== "image/png") {
           return json(
             withDebug({ error: { code: "INVALID_INPUT", message: "mask must be image/png" } }, debugEnabled, buildInputDebug(image, null, mask)),
@@ -112,9 +169,9 @@ export default {
             corsHeaders
           );
         }
-        if (mask.size > MAX_IMAGE_BYTES) {
+        if (mask.size > provider.maxImageBytes) {
           return json(
-            withDebug({ error: { code: "INVALID_INPUT", message: "mask exceeds 4MB" } }, debugEnabled, buildInputDebug(image, null, mask)),
+            withDebug({ error: { code: "INVALID_INPUT", message: `mask exceeds ${Math.floor(provider.maxImageBytes / (1024 * 1024))}MB` } }, debugEnabled, buildInputDebug(image, null, mask)),
             400,
             corsHeaders
           );
@@ -122,39 +179,19 @@ export default {
         maskFile = mask;
       }
 
-      if (typeof rawParams !== "string") {
-        return json(
-          withDebug({ error: { code: "INVALID_INPUT", message: "params must be a JSON string" } }, debugEnabled, buildInputDebug(image, null, maskFile)),
-          400,
-          corsHeaders
-        );
-      }
-
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(rawParams);
-      } catch {
-        return json(
-          withDebug({ error: { code: "INVALID_INPUT", message: "params must be valid JSON" } }, debugEnabled, buildInputDebug(image, null, maskFile)),
-          400,
-          corsHeaders
-        );
-      }
-
-      const params = validateParams(parsed);
       const prompt = resolvePrompt(params);
       const inputDebug = buildInputDebug(image, params, maskFile);
 
       const openAiForm = new FormData();
-      openAiForm.append("model", OPENAI_EDITS_MODEL);
+      openAiForm.append("model", provider.model);
       openAiForm.append("prompt", prompt);
       openAiForm.append("image", image, image.name || "input.png");
-      if (maskFile) openAiForm.append("mask", maskFile, maskFile.name || "mask.png");
+      if (maskFile && provider.supportsMask) openAiForm.append("mask", maskFile, maskFile.name || "mask.png");
       openAiForm.append("size", "1024x1024");
       openAiForm.append("response_format", "b64_json");
 
       const started = Date.now();
-      const openAiResponse = await fetch(OPENAI_IMAGE_EDITS_URL, {
+      const openAiResponse = await fetch(provider.endpoint, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${env.OPENAI_API_KEY}`
@@ -218,7 +255,8 @@ export default {
             mime_type: mimeType,
             image_data_url: `data:${mimeType};base64,${cleanedBase64}`,
             meta: {
-              model: OPENAI_EDITS_MODEL,
+              provider: provider.id,
+              model: provider.model,
               quality: params.quality,
               elapsed_ms: Date.now() - started
             },
@@ -265,6 +303,10 @@ function buildCorsHeaders(allowedOrigin: string): Headers {
 
 async function handleCapabilitiesRequest(url: URL, env: Env, corsHeaders: Headers): Promise<Response> {
   const shouldProbe = ["1", "true", "yes"].includes((url.searchParams.get("probe") || "").toLowerCase());
+  const requestedProvider = url.searchParams.get("provider");
+  const defaultProvider = resolveProviderId(env.DEFAULT_PROVIDER);
+  const providerId = resolveProviderId(requestedProvider, defaultProvider);
+  const provider = getProvider(providerId);
 
   const body: Record<string, unknown> = {
     api: {
@@ -274,14 +316,27 @@ async function handleCapabilitiesRequest(url: URL, env: Env, corsHeaders: Header
       ]
     },
     openai: {
-      endpoint: OPENAI_IMAGE_EDITS_URL,
-      model: OPENAI_EDITS_MODEL
+      endpoint: provider.endpoint,
+      model: provider.model
+    },
+    provider: {
+      selected: provider.id,
+      default: defaultProvider,
+      supported: Object.values(PROVIDERS).map((p) => ({
+        id: p.id,
+        label: p.label,
+        model: p.model,
+        endpoint: p.endpoint,
+        input_mime_types: p.inputMimeTypes,
+        max_image_bytes: p.maxImageBytes,
+        supports_mask: p.supportsMask
+      }))
     },
     constraints: {
-      supported_input_mime_types: ["image/png"],
+      supported_input_mime_types: provider.inputMimeTypes,
       accepted_params_for_upstream: ["model", "prompt", "image", "size", "response_format"],
       rejected_param_examples: ["quality"],
-      max_image_bytes: MAX_IMAGE_BYTES
+      max_image_bytes: provider.maxImageBytes
     },
     probe: {
       available: true,
@@ -309,13 +364,13 @@ async function handleCapabilitiesRequest(url: URL, env: Env, corsHeaders: Header
   const probeFile = new File([probeBytes], "probe.png", { type: "image/png" });
 
   const probeForm = new FormData();
-  probeForm.append("model", OPENAI_EDITS_MODEL);
+  probeForm.append("model", provider.model);
   probeForm.append("prompt", "Slightly adjust brightness while preserving the same tiny image.");
   probeForm.append("image", probeFile, "probe.png");
   probeForm.append("size", "256x256");
   probeForm.append("response_format", "b64_json");
 
-  const probeResponse = await fetch(OPENAI_IMAGE_EDITS_URL, {
+  const probeResponse = await fetch(provider.endpoint, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${env.OPENAI_API_KEY}`
@@ -422,12 +477,17 @@ function buildPrompt(params: AgeParams): string {
   return instructions.join(" ");
 }
 
-function validateParams(parsed: unknown): AgeParams {
+function validateParams(parsed: unknown, env: Env): AgeParams {
   if (!parsed || typeof parsed !== "object") {
     throw new Error("params must be a JSON object");
   }
 
   const obj = parsed as Record<string, unknown>;
+  const defaultProvider = resolveProviderId(env.DEFAULT_PROVIDER);
+  const provider = resolveProviderId(
+    typeof obj.provider === "string" ? obj.provider : null,
+    defaultProvider
+  );
 
   return {
     age_delta: numberInRange(obj.age_delta, -40, 40, "age_delta"),
@@ -438,9 +498,21 @@ function validateParams(parsed: unknown): AgeParams {
     blemish_fix: numberInRange(obj.blemish_fix, 0, 100, "blemish_fix"),
     skin_texture: numberInRange(obj.skin_texture, -100, 100, "skin_texture"),
     quality: enumValue(obj.quality, ["low", "medium", "high"], "quality"),
+    provider,
     preserve_identity: booleanValue(obj.preserve_identity, "preserve_identity"),
     prompt_override: optionalString(obj.prompt_override, "prompt_override")
   };
+}
+
+function parseJsonSafe(rawParams: FormDataEntryValue | null): unknown {
+  if (typeof rawParams !== "string") {
+    throw new Error("params must be a JSON string");
+  }
+  try {
+    return JSON.parse(rawParams);
+  } catch {
+    throw new Error("params must be valid JSON");
+  }
 }
 
 function numberInRange(value: unknown, min: number, max: number, key: string): number {
@@ -474,6 +546,17 @@ function optionalString(value: unknown, key: string): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function resolveProviderId(value: string | null | undefined, fallback: ProviderId = "dalle2"): ProviderId {
+  if (value === "dalle2" || value === "gptimage1") {
+    return value;
+  }
+  return fallback;
+}
+
+function getProvider(id: ProviderId) {
+  return PROVIDERS[id];
 }
 
 function resolvePrompt(params: AgeParams): string {

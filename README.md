@@ -34,6 +34,11 @@ The worker exposes:
 - `POST /api/age-face`
 - `OPTIONS` (CORS preflight)
 
+Model provider abstraction:
+- Frontend selector sends `params.provider` (`dalle2` or `gptimage1`)
+- Worker routes to provider-specific config (model/endpoint/constraints)
+- Optional worker default provider via `DEFAULT_PROVIDER` env var
+
 Set the frontend API Endpoint field to your deployed worker URL, for example:
 - `https://ageme-worker.<your-subdomain>.workers.dev/api/age-face`
 

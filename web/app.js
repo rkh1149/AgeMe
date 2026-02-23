@@ -10,6 +10,7 @@ const controls = {
   blemishFix: document.getElementById("blemishFix"),
   skinTexture: document.getElementById("skinTexture"),
   quality: document.getElementById("quality"),
+  modelProvider: document.getElementById("modelProvider"),
   preserveIdentity: document.getElementById("preserveIdentity"),
   inputPrompt: document.getElementById("inputPrompt"),
   outputPrompt: document.getElementById("outputPrompt"),
@@ -275,6 +276,7 @@ function buildParams() {
     blemish_fix: Number(controls.blemishFix.value),
     skin_texture: Number(controls.skinTexture.value),
     quality: controls.quality.value,
+    provider: controls.modelProvider.value,
     preserve_identity: controls.preserveIdentity.checked,
     prompt_override: promptOverride || null
   };
