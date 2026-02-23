@@ -181,31 +181,30 @@ export default {
 
       const prompt = resolvePrompt(params);
       const inputDebug = buildInputDebug(image, params, maskFile);
-
-      const openAiForm = new FormData();
-      openAiForm.append("model", provider.model);
-      openAiForm.append("prompt", prompt);
-      openAiForm.append("image", image, image.name || "input.png");
-      if (maskFile && provider.supportsMask) openAiForm.append("mask", maskFile, maskFile.name || "mask.png");
-      openAiForm.append("size", "1024x1024");
-      openAiForm.append("response_format", "b64_json");
-
       const started = Date.now();
-      const openAiResponse = await fetch(provider.endpoint, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${env.OPENAI_API_KEY}`
-        },
-        body: openAiForm
-      });
+      let selectedProvider = provider;
+      let openAiResponse = await callOpenAiEdits(env.OPENAI_API_KEY, selectedProvider, prompt, image, maskFile);
+      let openAiBody = (await openAiResponse.json()) as Record<string, unknown>;
+      let usedFallbackProvider = false;
 
-      const openAiBody = (await openAiResponse.json()) as Record<string, unknown>;
+      if (!openAiResponse.ok && shouldFallbackToDalle2(selectedProvider, openAiBody)) {
+        selectedProvider = getProvider("dalle2");
+        openAiResponse = await callOpenAiEdits(env.OPENAI_API_KEY, selectedProvider, prompt, image, maskFile);
+        openAiBody = (await openAiResponse.json()) as Record<string, unknown>;
+        usedFallbackProvider = true;
+      }
+
       const upstreamDebug = {
         upstream_status: openAiResponse.status,
         upstream_status_text: openAiResponse.statusText,
         upstream_request_id: openAiResponse.headers.get("x-request-id"),
         upstream_processing_ms: openAiResponse.headers.get("openai-processing-ms"),
-        upstream_error: extractOpenAiErrorDetails(openAiBody)
+        upstream_error: extractOpenAiErrorDetails(openAiBody),
+        requested_provider: provider.id,
+        requested_model: provider.model,
+        effective_provider: selectedProvider.id,
+        effective_model: selectedProvider.model,
+        fallback_applied: usedFallbackProvider
       };
 
       if (!openAiResponse.ok) {
@@ -255,8 +254,8 @@ export default {
             mime_type: mimeType,
             image_data_url: `data:${mimeType};base64,${cleanedBase64}`,
             meta: {
-              provider: provider.id,
-              model: provider.model,
+              provider: selectedProvider.id,
+              model: selectedProvider.model,
               quality: params.quality,
               elapsed_ms: Date.now() - started
             },
@@ -557,6 +556,39 @@ function resolveProviderId(value: string | null | undefined, fallback: ProviderI
 
 function getProvider(id: ProviderId) {
   return PROVIDERS[id];
+}
+
+function shouldFallbackToDalle2(provider: { id: ProviderId; model: string }, openAiBody: Record<string, unknown>): boolean {
+  if (provider.id === "dalle2") return false;
+  const err = extractOpenAiErrorDetails(openAiBody);
+  if (!err) return false;
+  return err.param === "model" && err.code === "invalid_value";
+}
+
+async function callOpenAiEdits(
+  apiKey: string,
+  provider: { model: string; endpoint: string; supportsMask: boolean },
+  prompt: string,
+  image: File,
+  maskFile: File | null
+): Promise<Response> {
+  const form = new FormData();
+  form.append("model", provider.model);
+  form.append("prompt", prompt);
+  form.append("image", image, image.name || "input.png");
+  if (maskFile && provider.supportsMask) {
+    form.append("mask", maskFile, maskFile.name || "mask.png");
+  }
+  form.append("size", "1024x1024");
+  form.append("response_format", "b64_json");
+
+  return fetch(provider.endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: form
+  });
 }
 
 function resolvePrompt(params: AgeParams): string {
