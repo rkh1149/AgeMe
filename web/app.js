@@ -494,12 +494,115 @@ function downloadImage() {
     return;
   }
 
-  const a = document.createElement("a");
-  a.href = state.afterDataUrl;
-  a.download = `ageme-${Date.now()}.png`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  saveGeneratedJpeg().catch((error) => {
+    const message = error instanceof Error ? error.message : "Could not save JPG.";
+    setStatus(`Error: ${message}`);
+  });
+}
+
+function loadImageFromDataUrl(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Could not decode generated image for JPG export."));
+    image.src = dataUrl;
+  });
+}
+
+function canvasToJpegBlob(canvas, quality = 0.92) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error("Failed to convert generated image to JPG."));
+        return;
+      }
+      resolve(blob);
+    }, "image/jpeg", quality);
+  });
+}
+
+async function buildGeneratedJpegFile() {
+  if (!state.afterDataUrl) {
+    throw new Error("No generated image to save.");
+  }
+
+  const image = await loadImageFromDataUrl(state.afterDataUrl);
+  const canvas = document.createElement("canvas");
+  canvas.width = image.width;
+  canvas.height = image.height;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    throw new Error("Could not prepare JPG export.");
+  }
+
+  // Flatten transparency to white background for JPEG.
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(image, 0, 0);
+
+  const blob = await canvasToJpegBlob(canvas, 0.92);
+  return new File([blob], `ageme-${Date.now()}.jpg`, { type: "image/jpeg" });
+}
+
+async function saveGeneratedJpeg() {
+  const jpgFile = await buildGeneratedJpegFile();
+
+  if (window.showSaveFilePicker) {
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: jpgFile.name,
+        types: [
+          {
+            description: "JPEG image",
+            accept: { "image/jpeg": [".jpg", ".jpeg"] }
+          }
+        ]
+      });
+      const writable = await handle.createWritable();
+      await writable.write(jpgFile);
+      await writable.close();
+      setStatus(`Saved ${jpgFile.name}`);
+      return;
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        setStatus("Save canceled.");
+        return;
+      }
+      // Fall through to other save options.
+    }
+  }
+
+  if (navigator.canShare && navigator.share && navigator.canShare({ files: [jpgFile] })) {
+    try {
+      await navigator.share({
+        files: [jpgFile],
+        title: "AgeMe Result",
+        text: "Generated with AgeMe"
+      });
+      setStatus(`Saved/shared ${jpgFile.name}`);
+      return;
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        setStatus("Save canceled.");
+        return;
+      }
+      // Fall through to download fallback.
+    }
+  }
+
+  const objectUrl = URL.createObjectURL(jpgFile);
+  try {
+    const a = document.createElement("a");
+    a.href = objectUrl;
+    a.download = jpgFile.name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setStatus(`Saved ${jpgFile.name}`);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 controls.form.addEventListener("submit", (event) => {
