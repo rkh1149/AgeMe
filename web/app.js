@@ -547,6 +547,8 @@ async function buildGeneratedJpegFile() {
 
 async function saveGeneratedJpeg() {
   const jpgFile = await buildGeneratedJpegFile();
+  const userAgent = navigator.userAgent || "";
+  const isMacDesktop = /Macintosh|Mac OS X/.test(userAgent) && !/iPhone|iPad|iPod/.test(userAgent);
 
   if (window.showSaveFilePicker) {
     try {
@@ -571,6 +573,23 @@ async function saveGeneratedJpeg() {
       }
       // Fall through to other save options.
     }
+  }
+
+  // On desktop macOS, prefer Finder-style save dialog and avoid share sheet fallback.
+  if (isMacDesktop) {
+    const objectUrl = URL.createObjectURL(jpgFile);
+    try {
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = jpgFile.name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setStatus("Browser save dialog API is unavailable. If Finder dialog does not appear, enable 'Ask where to save each file' in browser settings.");
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+    return;
   }
 
   if (navigator.canShare && navigator.share && navigator.canShare({ files: [jpgFile] })) {
