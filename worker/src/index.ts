@@ -709,18 +709,18 @@ async function callOpenAiGenerations(
   provider: { model: string },
   prompt: string
 ): Promise<Response> {
-  const form = new FormData();
-  form.append("model", provider.model);
-  form.append("prompt", prompt);
-  form.append("size", "1024x1024");
-  form.append("response_format", "b64_json");
-
   return fetch(OPENAI_IMAGE_GENERATIONS_URL, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${apiKey}`
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json"
     },
-    body: form
+    body: JSON.stringify({
+      model: provider.model,
+      prompt,
+      size: "1024x1024",
+      response_format: "b64_json"
+    })
   });
 }
 
