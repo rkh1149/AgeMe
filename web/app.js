@@ -13,6 +13,7 @@ const controls = {
   modelProvider: document.getElementById("modelProvider"),
   preserveIdentity: document.getElementById("preserveIdentity"),
   inputPrompt: document.getElementById("inputPrompt"),
+  overrideUsePhoto: document.getElementById("overrideUsePhoto"),
   outputPrompt: document.getElementById("outputPrompt"),
   debugMode: document.getElementById("debugMode"),
   regenerateBtn: document.getElementById("regenerateBtn"),
@@ -217,6 +218,23 @@ async function buildEditMaskFile(uploadFile, params) {
   return new File([maskBlob], maskName, { type: "image/png" });
 }
 
+async function buildFullImageMaskFile(uploadFile) {
+  const image = await loadImageFromObjectUrl(uploadFile);
+  const canvas = document.createElement("canvas");
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    throw new Error("Could not build override prompt mask.");
+  }
+
+  // Fully transparent means entire image region is editable.
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const maskBlob = await canvasToPngBlob(canvas);
+  const maskName = uploadFile.name.replace(/\.png$/i, "-override-mask.png");
+  return new File([maskBlob], maskName, { type: "image/png" });
+}
+
 async function onPhotoChange() {
   const file = controls.photo.files?.[0];
   clearGeneratedState();
@@ -278,7 +296,8 @@ function buildParams() {
     quality: controls.quality.value,
     provider: controls.modelProvider.value,
     preserve_identity: controls.preserveIdentity.checked,
-    prompt_override: promptOverride || null
+    prompt_override: promptOverride || null,
+    override_use_photo: Boolean(controls.overrideUsePhoto?.checked)
   };
 }
 
@@ -357,9 +376,14 @@ async function generateImage() {
 
   const params = buildParams();
   const hasPromptOverride = typeof params.prompt_override === "string" && params.prompt_override.length > 0;
+  const overrideUsesPhoto = hasPromptOverride && params.override_use_photo;
 
   if (!hasPromptOverride && !uploadFile) {
     setStatus("Please choose a photo first.");
+    return;
+  }
+  if (overrideUsesPhoto && !uploadFile) {
+    setStatus("Select a photo to use with the override prompt.");
     return;
   }
 
@@ -368,7 +392,11 @@ async function generateImage() {
     clearDebugDetails();
   }
 
-  setStatus(hasPromptOverride ? "Generating image from override prompt..." : "Generating image...");
+  setStatus(
+    hasPromptOverride
+      ? (overrideUsesPhoto ? "Applying override prompt to selected photo..." : "Generating image from override prompt...")
+      : "Generating image..."
+  );
   controls.form.querySelector("button[type='submit']").disabled = true;
 
   try {
@@ -376,8 +404,13 @@ async function generateImage() {
     payload.append("params", JSON.stringify(params));
 
     let maskFile = null;
-    if (hasPromptOverride) {
+    if (hasPromptOverride && !overrideUsesPhoto) {
       state.uploadMaskFile = null;
+    } else if (hasPromptOverride && overrideUsesPhoto) {
+      maskFile = await buildFullImageMaskFile(uploadFile);
+      state.uploadMaskFile = maskFile;
+      payload.append("image", uploadFile, uploadFile.name);
+      payload.append("mask", maskFile, maskFile.name);
     } else {
       maskFile = await buildEditMaskFile(uploadFile, params);
       state.uploadMaskFile = maskFile;
@@ -388,7 +421,9 @@ async function generateImage() {
     if (debugEnabled) {
       setDebugDetails({
         stage: "request",
-        mode: hasPromptOverride ? "prompt_override_generation" : "guided_edit",
+        mode: hasPromptOverride
+          ? (overrideUsesPhoto ? "prompt_override_photo_edit" : "prompt_override_generation")
+          : "guided_edit",
         client: buildClientDebug(params, uploadFile || null, maskFile)
       });
     }

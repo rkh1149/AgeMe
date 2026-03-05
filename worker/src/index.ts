@@ -21,6 +21,7 @@ interface AgeParams {
   provider: ProviderId;
   preserve_identity: boolean;
   prompt_override: string | null;
+  override_use_photo: boolean;
 }
 
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
@@ -117,7 +118,7 @@ export default {
       const prompt = resolvePrompt(params);
       const started = Date.now();
 
-      if (params.prompt_override) {
+      if (params.prompt_override && !params.override_use_photo) {
         const inputDebug = buildInputDebug(debugImage, params, debugMask);
         let selectedProvider = provider;
         let openAiResponse = await callOpenAiGenerations(env.OPENAI_API_KEY, selectedProvider, prompt);
@@ -132,7 +133,7 @@ export default {
         }
 
         const upstreamDebug = {
-          mode: "prompt_override_generation",
+              mode: "prompt_override_generation",
           upstream_status: openAiResponse.status,
           upstream_status_text: openAiResponse.statusText,
           upstream_request_id: openAiResponse.headers.get("x-request-id"),
@@ -219,7 +220,7 @@ export default {
       if (!(imageEntry instanceof File)) {
         return json(
           withDebug(
-            { error: { code: "INVALID_INPUT", message: "image is required when override prompt is blank" } },
+            { error: { code: "INVALID_INPUT", message: "image is required for guided edit or override-with-photo mode" } },
             debugEnabled,
             buildInputDebug(debugImage, params, debugMask)
           ),
@@ -302,7 +303,7 @@ export default {
       }
 
       const upstreamDebug = {
-        mode: "guided_edit",
+        mode: params.prompt_override ? "prompt_override_photo_edit" : "guided_edit",
         upstream_status: openAiResponse.status,
         upstream_status_text: openAiResponse.statusText,
         upstream_request_id: openAiResponse.headers.get("x-request-id"),
@@ -362,7 +363,7 @@ export default {
             mime_type: mimeType,
             image_data_url: `data:${mimeType};base64,${cleanedBase64}`,
             meta: {
-              mode: "guided_edit",
+              mode: params.prompt_override ? "prompt_override_photo_edit" : "guided_edit",
               provider: selectedProvider.id,
               model: selectedProvider.model,
               quality: params.quality,
@@ -446,7 +447,7 @@ async function handleCapabilitiesRequest(url: URL, env: Env, corsHeaders: Header
       accepted_params_for_upstream: ["model", "prompt", "image", "size", "response_format"],
       rejected_param_examples: ["quality"],
       max_image_bytes: provider.maxImageBytes,
-      prompt_override_behavior: "When prompt_override is provided, worker uses text-to-image generation and ignores image-dependent UI controls."
+      prompt_override_behavior: "When prompt_override is provided and override_use_photo is false, worker uses text-to-image generation. When override_use_photo is true, worker edits the selected photo using only the override prompt."
     },
     probe: {
       available: true,
@@ -612,7 +613,8 @@ function validateParams(parsed: unknown, env: Env): AgeParams {
     quality: enumValue(obj.quality, ["low", "medium", "high"], "quality"),
     provider,
     preserve_identity: booleanValue(obj.preserve_identity, "preserve_identity"),
-    prompt_override: optionalString(obj.prompt_override, "prompt_override")
+    prompt_override: optionalString(obj.prompt_override, "prompt_override"),
+    override_use_photo: optionalBoolean(obj.override_use_photo, false, "override_use_photo")
   };
 }
 
@@ -658,6 +660,14 @@ function optionalString(value: unknown, key: string): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function optionalBoolean(value: unknown, fallback: boolean, key: string): boolean {
+  if (value == null) return fallback;
+  if (typeof value !== "boolean") {
+    throw new Error(`${key} must be boolean`);
+  }
+  return value;
 }
 
 function resolveProviderId(value: string | null | undefined, fallback: ProviderId = "dalle2"): ProviderId {
