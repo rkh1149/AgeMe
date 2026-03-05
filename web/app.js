@@ -349,11 +349,6 @@ function buildClientDebug(params, uploadFile, uploadMaskFile) {
 
 async function generateImage() {
   const uploadFile = state.uploadFile || state.sourceFile;
-  if (!uploadFile) {
-    setStatus("Please choose a photo first.");
-    return;
-  }
-
   const apiUrl = controls.apiUrl.value.trim();
   if (!apiUrl) {
     setStatus("Set your API endpoint first.");
@@ -361,25 +356,41 @@ async function generateImage() {
   }
 
   const params = buildParams();
+  const hasPromptOverride = typeof params.prompt_override === "string" && params.prompt_override.length > 0;
+
+  if (!hasPromptOverride && !uploadFile) {
+    setStatus("Please choose a photo first.");
+    return;
+  }
 
   const debugEnabled = isDebugEnabled();
   if (!debugEnabled) {
     clearDebugDetails();
   }
 
-  setStatus("Generating image...");
+  setStatus(hasPromptOverride ? "Generating image from override prompt..." : "Generating image...");
   controls.form.querySelector("button[type='submit']").disabled = true;
 
   try {
-    const maskFile = await buildEditMaskFile(uploadFile, params);
-    state.uploadMaskFile = maskFile;
     const payload = new FormData();
-    payload.append("image", uploadFile, uploadFile.name);
-    payload.append("mask", maskFile, maskFile.name);
     payload.append("params", JSON.stringify(params));
 
+    let maskFile = null;
+    if (hasPromptOverride) {
+      state.uploadMaskFile = null;
+    } else {
+      maskFile = await buildEditMaskFile(uploadFile, params);
+      state.uploadMaskFile = maskFile;
+      payload.append("image", uploadFile, uploadFile.name);
+      payload.append("mask", maskFile, maskFile.name);
+    }
+
     if (debugEnabled) {
-      setDebugDetails({ stage: "request", client: buildClientDebug(params, uploadFile, maskFile) });
+      setDebugDetails({
+        stage: "request",
+        mode: hasPromptOverride ? "prompt_override_generation" : "guided_edit",
+        client: buildClientDebug(params, uploadFile || null, maskFile)
+      });
     }
 
     const headers = {};

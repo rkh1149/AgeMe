@@ -25,6 +25,7 @@ interface AgeParams {
 
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const OPENAI_IMAGE_EDITS_URL = "https://api.openai.com/v1/images/edits";
+const OPENAI_IMAGE_GENERATIONS_URL = "https://api.openai.com/v1/images/generations";
 const PROBE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Zb+0AAAAASUVORK5CYII=";
 const PROVIDERS: Record<ProviderId, { id: ProviderId; label: string; model: string; endpoint: string; inputMimeTypes: string[]; maxImageBytes: number; supportsMask: boolean }> = {
@@ -34,7 +35,7 @@ const PROVIDERS: Record<ProviderId, { id: ProviderId; label: string; model: stri
     model: "dall-e-2",
     endpoint: OPENAI_IMAGE_EDITS_URL,
     inputMimeTypes: ["image/png"],
-    maxImageBytes: 4 * 1024 * 1024,
+    maxImageBytes: MAX_IMAGE_BYTES,
     supportsMask: true
   },
   gptimage1: {
@@ -43,7 +44,7 @@ const PROVIDERS: Record<ProviderId, { id: ProviderId; label: string; model: stri
     model: "gpt-image-1",
     endpoint: OPENAI_IMAGE_EDITS_URL,
     inputMimeTypes: ["image/png"],
-    maxImageBytes: 4 * 1024 * 1024,
+    maxImageBytes: MAX_IMAGE_BYTES,
     supportsMask: true
   }
 };
@@ -90,17 +91,11 @@ export default {
       }
 
       const formData = await request.formData();
-      const image = formData.get("image");
+      const imageEntry = formData.get("image");
       const rawParams = formData.get("params");
-      const mask = formData.get("mask");
-
-      if (!(image instanceof File)) {
-        return json(
-          withDebug({ error: { code: "INVALID_INPUT", message: "image is required" } }, debugEnabled, null),
-          400,
-          corsHeaders
-        );
-      }
+      const maskEntry = formData.get("mask");
+      const debugImage = imageEntry instanceof File ? imageEntry : null;
+      const debugMask = maskEntry instanceof File ? maskEntry : null;
 
       let params: AgeParams;
       try {
@@ -112,13 +107,127 @@ export default {
           withDebug(
             { error: { code: "INVALID_INPUT", message } },
             debugEnabled,
-            buildInputDebug(image, null, null)
+            buildInputDebug(debugImage, null, debugMask)
           ),
           400,
           corsHeaders
         );
       }
       const provider = getProvider(params.provider);
+      const prompt = resolvePrompt(params);
+      const started = Date.now();
+
+      if (params.prompt_override) {
+        const inputDebug = buildInputDebug(debugImage, params, debugMask);
+        let selectedProvider = provider;
+        let openAiResponse = await callOpenAiGenerations(env.OPENAI_API_KEY, selectedProvider, prompt);
+        let openAiBody = (await openAiResponse.json()) as Record<string, unknown>;
+        let usedFallbackProvider = false;
+
+        if (!openAiResponse.ok && shouldFallbackToDalle2(selectedProvider, openAiBody)) {
+          selectedProvider = getProvider("dalle2");
+          openAiResponse = await callOpenAiGenerations(env.OPENAI_API_KEY, selectedProvider, prompt);
+          openAiBody = (await openAiResponse.json()) as Record<string, unknown>;
+          usedFallbackProvider = true;
+        }
+
+        const upstreamDebug = {
+          mode: "prompt_override_generation",
+          upstream_status: openAiResponse.status,
+          upstream_status_text: openAiResponse.statusText,
+          upstream_request_id: openAiResponse.headers.get("x-request-id"),
+          upstream_processing_ms: openAiResponse.headers.get("openai-processing-ms"),
+          upstream_error: extractOpenAiErrorDetails(openAiBody),
+          requested_provider: provider.id,
+          requested_model: provider.model,
+          effective_provider: selectedProvider.id,
+          effective_model: selectedProvider.model,
+          fallback_applied: usedFallbackProvider,
+          ui_settings_ignored: true
+        };
+
+        if (!openAiResponse.ok) {
+          return json(
+            withDebug(
+              {
+                error: {
+                  code: "UPSTREAM_ERROR",
+                  message: extractOpenAiError(openAiBody) ?? "OpenAI request failed"
+                }
+              },
+              debugEnabled,
+              {
+                input: inputDebug,
+                upstream: upstreamDebug
+              }
+            ),
+            openAiResponse.status,
+            corsHeaders
+          );
+        }
+
+        const firstImage = extractImagePayload(openAiBody);
+        if (!firstImage) {
+          return json(
+            withDebug(
+              { error: { code: "UPSTREAM_ERROR", message: "No image output returned by model" } },
+              debugEnabled,
+              {
+                input: inputDebug,
+                upstream: upstreamDebug
+              }
+            ),
+            502,
+            corsHeaders
+          );
+        }
+
+        const cleanedBase64 = firstImage.b64.replace(/\s+/g, "");
+        const mimeType = inferMimeTypeFromBase64(cleanedBase64, firstImage.mime);
+
+        return json(
+          withDebug(
+            {
+              id: (openAiBody.id as string | undefined) ?? crypto.randomUUID(),
+              image_base64: cleanedBase64,
+              mime_type: mimeType,
+              image_data_url: `data:${mimeType};base64,${cleanedBase64}`,
+              meta: {
+                mode: "prompt_override_generation",
+                provider: selectedProvider.id,
+                model: selectedProvider.model,
+                quality: params.quality,
+                elapsed_ms: Date.now() - started
+              },
+              prompt_used: prompt
+            },
+            debugEnabled,
+            {
+              input: inputDebug,
+              upstream: upstreamDebug,
+              output: {
+                mime_type: mimeType,
+                base64_length: cleanedBase64.length
+              }
+            }
+          ),
+          200,
+          corsHeaders
+        );
+      }
+
+      if (!(imageEntry instanceof File)) {
+        return json(
+          withDebug(
+            { error: { code: "INVALID_INPUT", message: "image is required when override prompt is blank" } },
+            debugEnabled,
+            buildInputDebug(debugImage, params, debugMask)
+          ),
+          400,
+          corsHeaders
+        );
+      }
+      const image = imageEntry;
 
       if (!provider.inputMimeTypes.includes(image.type)) {
         return json(
@@ -127,7 +236,7 @@ export default {
               error: { code: "INVALID_INPUT", message: `image must be one of: ${provider.inputMimeTypes.join(", ")}` }
             },
             debugEnabled,
-            buildInputDebug(image, null, null)
+            buildInputDebug(image, params, null)
           ),
           400,
           corsHeaders
@@ -139,7 +248,7 @@ export default {
           withDebug(
             { error: { code: "INVALID_INPUT", message: `image exceeds ${Math.floor(provider.maxImageBytes / (1024 * 1024))}MB` } },
             debugEnabled,
-            buildInputDebug(image, null, null)
+            buildInputDebug(image, params, null)
           ),
           400,
           corsHeaders
@@ -147,41 +256,39 @@ export default {
       }
 
       let maskFile: File | null = null;
-      if (mask != null) {
-        if (!(mask instanceof File)) {
+      if (maskEntry != null) {
+        if (!(maskEntry instanceof File)) {
           return json(
-            withDebug({ error: { code: "INVALID_INPUT", message: "mask must be a file when provided" } }, debugEnabled, buildInputDebug(image, null, null)),
+            withDebug({ error: { code: "INVALID_INPUT", message: "mask must be a file when provided" } }, debugEnabled, buildInputDebug(image, params, null)),
             400,
             corsHeaders
           );
         }
         if (!provider.supportsMask) {
           return json(
-            withDebug({ error: { code: "INVALID_INPUT", message: `mask is not supported by provider ${provider.id}` } }, debugEnabled, buildInputDebug(image, null, mask)),
+            withDebug({ error: { code: "INVALID_INPUT", message: `mask is not supported by provider ${provider.id}` } }, debugEnabled, buildInputDebug(image, params, maskEntry)),
             400,
             corsHeaders
           );
         }
-        if (mask.type !== "image/png") {
+        if (maskEntry.type !== "image/png") {
           return json(
-            withDebug({ error: { code: "INVALID_INPUT", message: "mask must be image/png" } }, debugEnabled, buildInputDebug(image, null, mask)),
+            withDebug({ error: { code: "INVALID_INPUT", message: "mask must be image/png" } }, debugEnabled, buildInputDebug(image, params, maskEntry)),
             400,
             corsHeaders
           );
         }
-        if (mask.size > provider.maxImageBytes) {
+        if (maskEntry.size > provider.maxImageBytes) {
           return json(
-            withDebug({ error: { code: "INVALID_INPUT", message: `mask exceeds ${Math.floor(provider.maxImageBytes / (1024 * 1024))}MB` } }, debugEnabled, buildInputDebug(image, null, mask)),
+            withDebug({ error: { code: "INVALID_INPUT", message: `mask exceeds ${Math.floor(provider.maxImageBytes / (1024 * 1024))}MB` } }, debugEnabled, buildInputDebug(image, params, maskEntry)),
             400,
             corsHeaders
           );
         }
-        maskFile = mask;
+        maskFile = maskEntry;
       }
 
-      const prompt = resolvePrompt(params);
       const inputDebug = buildInputDebug(image, params, maskFile);
-      const started = Date.now();
       let selectedProvider = provider;
       let openAiResponse = await callOpenAiEdits(env.OPENAI_API_KEY, selectedProvider, prompt, image, maskFile);
       let openAiBody = (await openAiResponse.json()) as Record<string, unknown>;
@@ -195,6 +302,7 @@ export default {
       }
 
       const upstreamDebug = {
+        mode: "guided_edit",
         upstream_status: openAiResponse.status,
         upstream_status_text: openAiResponse.statusText,
         upstream_request_id: openAiResponse.headers.get("x-request-id"),
@@ -254,6 +362,7 @@ export default {
             mime_type: mimeType,
             image_data_url: `data:${mimeType};base64,${cleanedBase64}`,
             meta: {
+              mode: "guided_edit",
               provider: selectedProvider.id,
               model: selectedProvider.model,
               quality: params.quality,
@@ -315,7 +424,8 @@ async function handleCapabilitiesRequest(url: URL, env: Env, corsHeaders: Header
       ]
     },
     openai: {
-      endpoint: provider.endpoint,
+      edits_endpoint: provider.endpoint,
+      generations_endpoint: OPENAI_IMAGE_GENERATIONS_URL,
       model: provider.model
     },
     provider: {
@@ -335,7 +445,8 @@ async function handleCapabilitiesRequest(url: URL, env: Env, corsHeaders: Header
       supported_input_mime_types: provider.inputMimeTypes,
       accepted_params_for_upstream: ["model", "prompt", "image", "size", "response_format"],
       rejected_param_examples: ["quality"],
-      max_image_bytes: provider.maxImageBytes
+      max_image_bytes: provider.maxImageBytes,
+      prompt_override_behavior: "When prompt_override is provided, worker uses text-to-image generation and ignores image-dependent UI controls."
     },
     probe: {
       available: true,
@@ -415,14 +526,16 @@ function withDebug<T extends Record<string, unknown>>(body: T, enabled: boolean,
   return { ...body, debug };
 }
 
-function buildInputDebug(image: File, params: AgeParams | null, mask: File | null): Record<string, unknown> {
+function buildInputDebug(image: File | null, params: AgeParams | null, mask: File | null): Record<string, unknown> {
   return {
-    image: {
-      name: image.name,
-      type: image.type,
-      size: image.size,
-      last_modified: image.lastModified
-    },
+    image: image
+      ? {
+          name: image.name,
+          type: image.type,
+          size: image.size,
+          last_modified: image.lastModified
+        }
+      : null,
     mask: mask
       ? {
           name: mask.name,
@@ -583,6 +696,26 @@ async function callOpenAiEdits(
   form.append("response_format", "b64_json");
 
   return fetch(provider.endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: form
+  });
+}
+
+async function callOpenAiGenerations(
+  apiKey: string,
+  provider: { model: string },
+  prompt: string
+): Promise<Response> {
+  const form = new FormData();
+  form.append("model", provider.model);
+  form.append("prompt", prompt);
+  form.append("size", "1024x1024");
+  form.append("response_format", "b64_json");
+
+  return fetch(OPENAI_IMAGE_GENERATIONS_URL, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`
