@@ -167,7 +167,7 @@ export default {
           );
         }
 
-        const firstImage = extractImagePayload(openAiBody);
+        const firstImage = await extractImagePayload(openAiBody);
         if (!firstImage) {
           return json(
             withDebug(
@@ -336,7 +336,7 @@ export default {
         );
       }
 
-      const firstImage = extractImagePayload(openAiBody);
+      const firstImage = await extractImagePayload(openAiBody);
       if (!firstImage) {
         return json(
           withDebug(
@@ -444,7 +444,10 @@ async function handleCapabilitiesRequest(url: URL, env: Env, corsHeaders: Header
     },
     constraints: {
       supported_input_mime_types: provider.inputMimeTypes,
-      accepted_params_for_upstream: ["model", "prompt", "image", "size", "response_format"],
+      accepted_params_for_upstream: {
+        guided_edit: ["model", "prompt", "image", "mask", "size", "response_format"],
+        prompt_override_generation: ["model", "prompt", "size"]
+      },
       rejected_param_examples: ["quality"],
       max_image_bytes: provider.maxImageBytes,
       prompt_override_behavior: "When prompt_override is provided and override_use_photo is false, worker uses text-to-image generation. When override_use_photo is true, worker edits the selected photo using only the override prompt."
@@ -490,7 +493,7 @@ async function handleCapabilitiesRequest(url: URL, env: Env, corsHeaders: Header
   });
 
   const probeRaw = (await probeResponse.json()) as Record<string, unknown>;
-  const probeImage = extractImagePayload(probeRaw);
+  const probeImage = await extractImagePayload(probeRaw);
 
   body.probe = {
     available: true,
@@ -728,8 +731,7 @@ async function callOpenAiGenerations(
     body: JSON.stringify({
       model: provider.model,
       prompt,
-      size: "1024x1024",
-      response_format: "b64_json"
+      size: "1024x1024"
     })
   });
 }
@@ -761,7 +763,7 @@ function extractOpenAiErrorDetails(body: Record<string, unknown>): Record<string
   };
 }
 
-function extractImagePayload(body: Record<string, unknown>): { b64: string; mime: string } | null {
+async function extractImagePayload(body: Record<string, unknown>): Promise<{ b64: string; mime: string } | null> {
   const data = body.data;
   if (!Array.isArray(data) || data.length === 0) {
     return null;
@@ -770,11 +772,35 @@ function extractImagePayload(body: Record<string, unknown>): { b64: string; mime
   const first = data[0] as Record<string, unknown>;
   const b64 = first.b64_json;
   if (typeof b64 !== "string" || b64.length === 0) {
-    return null;
+    const url = first.url;
+    if (typeof url !== "string" || url.length === 0) {
+      return null;
+    }
+
+    try {
+      const imageResponse = await fetch(url);
+      if (!imageResponse.ok) return null;
+      const contentType = imageResponse.headers.get("content-type") || "image/png";
+      const bytes = new Uint8Array(await imageResponse.arrayBuffer());
+      const asBase64 = uint8ToBase64(bytes);
+      return { b64: asBase64, mime: contentType };
+    } catch {
+      return null;
+    }
   }
 
   const mime = typeof first.mime_type === "string" ? first.mime_type : "image/png";
   return { b64, mime };
+}
+
+function uint8ToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
 }
 
 function inferMimeTypeFromBase64(base64: string, fallback: string): string {
