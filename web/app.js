@@ -347,6 +347,23 @@ function parseJsonSafely(rawText) {
   }
 }
 
+function normalizeApiEndpoint(rawUrl) {
+  const trimmed = String(rawUrl || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  try {
+    const url = new URL(trimmed);
+    url.pathname = "/api/age-face";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return trimmed;
+  }
+}
+
 function buildClientDebug(params, uploadFile, uploadMaskFile) {
   return {
     timestamp: new Date().toISOString(),
@@ -368,11 +385,13 @@ function buildClientDebug(params, uploadFile, uploadMaskFile) {
 
 async function generateImage() {
   const uploadFile = state.uploadFile || state.sourceFile;
-  const apiUrl = controls.apiUrl.value.trim();
-  if (!apiUrl) {
+  const apiUrlInput = controls.apiUrl.value.trim();
+  if (!apiUrlInput) {
     setStatus("Set your API endpoint first.");
     return;
   }
+  const apiUrl = normalizeApiEndpoint(apiUrlInput);
+  controls.apiUrl.value = apiUrl;
 
   const params = buildParams();
   const hasPromptOverride = typeof params.prompt_override === "string" && params.prompt_override.length > 0;
