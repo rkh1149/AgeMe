@@ -141,6 +141,20 @@ button:disabled {
   gap: 10px;
 }
 
+.compare-labels {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #425164;
+  padding: 0 4px;
+}
+
+.compare-label {
+  display: inline-block;
+}
+
 .compare {
   width: 100%;
   min-height: 320px;
