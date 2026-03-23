@@ -91,6 +91,10 @@ function clearGeneratedState() {
   controls.regenerateBtn.disabled = true;
 }
 
+function hasPromptOverrideText() {
+  return (controls.inputPrompt?.value || "").trim().length > 0;
+}
+
 function loadImageFromObjectUrl(file) {
   return new Promise((resolve, reject) => {
     const objectUrl = URL.createObjectURL(file);
@@ -241,7 +245,7 @@ async function onPhotoChange() {
   clearDebugDetails();
 
   if (!file) {
-    setStatus("Select a photo to start.");
+    setStatus(hasPromptOverrideText() ? "Prompt-only mode ready. Click Generate." : "Select a photo or enter an input prompt to start.");
     controls.beforeImage.src = "";
     state.sourceFile = null;
     state.uploadFile = null;
@@ -658,6 +662,10 @@ controls.baldness.addEventListener("input", setSliderLabels);
 controls.blemishFix.addEventListener("input", setSliderLabels);
 controls.skinTexture.addEventListener("input", setSliderLabels);
 controls.debugMode.addEventListener("change", clearDebugDetails);
+controls.inputPrompt.addEventListener("input", () => {
+  if (state.sourceFile) return;
+  setStatus(hasPromptOverrideText() ? "Prompt-only mode ready. Click Generate." : "Select a photo or enter an input prompt to start.");
+});
 
 clearDebugDetails();
 setSliderLabels();
