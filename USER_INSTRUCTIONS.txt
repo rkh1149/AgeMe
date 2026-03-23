@@ -1,0 +1,53 @@
+AgeMe User Instructions
+
+What this app does
+AgeMe creates a new image based on your photo and settings, or based on a text prompt.
+
+Before you start
+1. Open the app.
+2. In API Endpoint, make sure your endpoint is filled in.
+
+Basic photo editing flow
+1. Choose a photo using Photo.
+2. Set your options (Age Delta, Intensity, Hair Color, Glasses, Baldness, Blemish Fix, Skin Texture).
+3. Choose Model Provider.
+4. Click Generate.
+5. Compare results using the slider:
+   - Before = original photo side
+   - After = generated photo side
+6. Click Save JPG to save the result to your device.
+
+Using an input prompt (override)
+You can type your own prompt in Input Prompt.
+
+If Input Prompt is filled and "Use selected photo with override prompt" is OFF:
+- The app generates an image from your prompt only.
+- Other visual controls are ignored.
+- You do not need to select a photo.
+
+If Input Prompt is filled and "Use selected photo with override prompt" is ON:
+- The app uses your selected photo and applies your prompt to it.
+- The prompt is the instruction that drives the result.
+
+Output Prompt field
+After generation, Output Prompt shows the exact prompt used for that result.
+
+Regenerate
+Use Regenerate to create another result with the current settings or prompt.
+
+Save JPG
+Save JPG exports the generated image in JPG format.
+- On supported desktop browsers, you may be asked where to save.
+- On phones/tablets, your device share/save options may open.
+
+Tips for better results
+1. Use a clear, well-lit portrait photo.
+2. For strong changes, increase Intensity and larger Age Delta.
+3. If using prompt override, write clear, direct instructions.
+4. If a result is not what you want, adjust and Regenerate.
+
+Troubleshooting
+1. If Generate fails, check that API Endpoint is correct.
+2. If using photo mode, make sure a photo is selected.
+3. If using prompt-only mode, make sure Input Prompt is not blank.
+4. If needed, turn on Debug diagnostics and try again.
