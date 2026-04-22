@@ -29,11 +29,12 @@ const OPENAI_IMAGE_EDITS_URL = "https://api.openai.com/v1/images/edits";
 const OPENAI_IMAGE_GENERATIONS_URL = "https://api.openai.com/v1/images/generations";
 const PROBE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Zb+0AAAAASUVORK5CYII=";
-const PROVIDERS: Record<ProviderId, { id: ProviderId; label: string; model: string; endpoint: string; inputMimeTypes: string[]; maxImageBytes: number; supportsMask: boolean }> = {
+const PROVIDERS: Record<ProviderId, { id: ProviderId; label: string; editModel: string; generationModel: string; endpoint: string; inputMimeTypes: string[]; maxImageBytes: number; supportsMask: boolean }> = {
   dalle2: {
     id: "dalle2",
-    label: "DALL-E 2 (edits)",
-    model: "dall-e-2",
+    label: "CHATGPT Images 2.0",
+    editModel: "dall-e-2",
+    generationModel: "gpt-image-1.5",
     endpoint: OPENAI_IMAGE_EDITS_URL,
     inputMimeTypes: ["image/png"],
     maxImageBytes: MAX_IMAGE_BYTES,
@@ -42,7 +43,8 @@ const PROVIDERS: Record<ProviderId, { id: ProviderId; label: string; model: stri
   gptimage1: {
     id: "gptimage1",
     label: "GPT Image 1 (edits)",
-    model: "gpt-image-1",
+    editModel: "gpt-image-1",
+    generationModel: "gpt-image-1",
     endpoint: OPENAI_IMAGE_EDITS_URL,
     inputMimeTypes: ["image/png"],
     maxImageBytes: MAX_IMAGE_BYTES,
@@ -140,9 +142,9 @@ export default {
           upstream_processing_ms: openAiResponse.headers.get("openai-processing-ms"),
           upstream_error: extractOpenAiErrorDetails(openAiBody),
           requested_provider: provider.id,
-          requested_model: provider.model,
+          requested_model: provider.generationModel,
           effective_provider: selectedProvider.id,
-          effective_model: selectedProvider.model,
+          effective_model: selectedProvider.generationModel,
           fallback_applied: usedFallbackProvider,
           ui_settings_ignored: true
         };
@@ -196,7 +198,7 @@ export default {
               meta: {
                 mode: "prompt_override_generation",
                 provider: selectedProvider.id,
-                model: selectedProvider.model,
+                model: selectedProvider.generationModel,
                 quality: params.quality,
                 elapsed_ms: Date.now() - started
               },
@@ -310,9 +312,9 @@ export default {
         upstream_processing_ms: openAiResponse.headers.get("openai-processing-ms"),
         upstream_error: extractOpenAiErrorDetails(openAiBody),
         requested_provider: provider.id,
-        requested_model: provider.model,
+        requested_model: provider.editModel,
         effective_provider: selectedProvider.id,
-        effective_model: selectedProvider.model,
+        effective_model: selectedProvider.editModel,
         fallback_applied: usedFallbackProvider
       };
 
@@ -365,7 +367,7 @@ export default {
             meta: {
               mode: params.prompt_override ? "prompt_override_photo_edit" : "guided_edit",
               provider: selectedProvider.id,
-              model: selectedProvider.model,
+              model: selectedProvider.editModel,
               quality: params.quality,
               elapsed_ms: Date.now() - started
             },
@@ -427,7 +429,8 @@ async function handleCapabilitiesRequest(url: URL, env: Env, corsHeaders: Header
     openai: {
       edits_endpoint: provider.endpoint,
       generations_endpoint: OPENAI_IMAGE_GENERATIONS_URL,
-      model: provider.model
+      edit_model: provider.editModel,
+      generation_model: provider.generationModel
     },
     provider: {
       selected: provider.id,
@@ -435,7 +438,8 @@ async function handleCapabilitiesRequest(url: URL, env: Env, corsHeaders: Header
       supported: Object.values(PROVIDERS).map((p) => ({
         id: p.id,
         label: p.label,
-        model: p.model,
+        edit_model: p.editModel,
+        generation_model: p.generationModel,
         endpoint: p.endpoint,
         input_mime_types: p.inputMimeTypes,
         max_image_bytes: p.maxImageBytes,
@@ -478,7 +482,7 @@ async function handleCapabilitiesRequest(url: URL, env: Env, corsHeaders: Header
   const probeFile = new File([probeBytes], "probe.png", { type: "image/png" });
 
   const probeForm = new FormData();
-  probeForm.append("model", provider.model);
+  probeForm.append("model", provider.editModel);
   probeForm.append("prompt", "Slightly adjust brightness while preserving the same tiny image.");
   probeForm.append("image", probeFile, "probe.png");
   probeForm.append("size", "256x256");
@@ -693,13 +697,13 @@ function shouldFallbackToDalle2(provider: { id: ProviderId; model: string }, ope
 
 async function callOpenAiEdits(
   apiKey: string,
-  provider: { model: string; endpoint: string; supportsMask: boolean },
+  provider: { editModel: string; endpoint: string; supportsMask: boolean },
   prompt: string,
   image: File,
   maskFile: File | null
 ): Promise<Response> {
   const form = new FormData();
-  form.append("model", provider.model);
+  form.append("model", provider.editModel);
   form.append("prompt", prompt);
   form.append("image", image, image.name || "input.png");
   if (maskFile && provider.supportsMask) {
@@ -719,7 +723,7 @@ async function callOpenAiEdits(
 
 async function callOpenAiGenerations(
   apiKey: string,
-  provider: { model: string },
+  provider: { generationModel: string },
   prompt: string
 ): Promise<Response> {
   return fetch(OPENAI_IMAGE_GENERATIONS_URL, {
@@ -729,7 +733,7 @@ async function callOpenAiGenerations(
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      model: provider.model,
+      model: provider.generationModel,
       prompt,
       size: "1024x1024"
     })
