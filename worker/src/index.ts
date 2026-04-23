@@ -29,12 +29,13 @@ const OPENAI_IMAGE_EDITS_URL = "https://api.openai.com/v1/images/edits";
 const OPENAI_IMAGE_GENERATIONS_URL = "https://api.openai.com/v1/images/generations";
 const PROBE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Zb+0AAAAASUVORK5CYII=";
-const PROVIDERS: Record<ProviderId, { id: ProviderId; label: string; editModel: string; generationModel: string; endpoint: string; inputMimeTypes: string[]; maxImageBytes: number; supportsMask: boolean }> = {
+const PROVIDERS: Record<ProviderId, { id: ProviderId; label: string; editModel: string; generationModel: string; generationSize: string; endpoint: string; inputMimeTypes: string[]; maxImageBytes: number; supportsMask: boolean }> = {
   dalle2: {
     id: "dalle2",
     label: "CHATGPT Images 2.0",
     editModel: "dall-e-2",
-    generationModel: "gpt-image-1.5",
+    generationModel: "gpt-image-2",
+    generationSize: "1024x1536",
     endpoint: OPENAI_IMAGE_EDITS_URL,
     inputMimeTypes: ["image/png"],
     maxImageBytes: MAX_IMAGE_BYTES,
@@ -45,6 +46,7 @@ const PROVIDERS: Record<ProviderId, { id: ProviderId; label: string; editModel: 
     label: "GPT Image 1 (edits)",
     editModel: "gpt-image-1",
     generationModel: "gpt-image-1",
+    generationSize: "1024x1024",
     endpoint: OPENAI_IMAGE_EDITS_URL,
     inputMimeTypes: ["image/png"],
     maxImageBytes: MAX_IMAGE_BYTES,
@@ -430,7 +432,8 @@ async function handleCapabilitiesRequest(url: URL, env: Env, corsHeaders: Header
       edits_endpoint: provider.endpoint,
       generations_endpoint: OPENAI_IMAGE_GENERATIONS_URL,
       edit_model: provider.editModel,
-      generation_model: provider.generationModel
+      generation_model: provider.generationModel,
+      generation_size: provider.generationSize
     },
     provider: {
       selected: provider.id,
@@ -440,6 +443,7 @@ async function handleCapabilitiesRequest(url: URL, env: Env, corsHeaders: Header
         label: p.label,
         edit_model: p.editModel,
         generation_model: p.generationModel,
+        generation_size: p.generationSize,
         endpoint: p.endpoint,
         input_mime_types: p.inputMimeTypes,
         max_image_bytes: p.maxImageBytes,
@@ -723,7 +727,7 @@ async function callOpenAiEdits(
 
 async function callOpenAiGenerations(
   apiKey: string,
-  provider: { generationModel: string },
+  provider: { generationModel: string; generationSize: string },
   prompt: string
 ): Promise<Response> {
   return fetch(OPENAI_IMAGE_GENERATIONS_URL, {
@@ -735,7 +739,7 @@ async function callOpenAiGenerations(
     body: JSON.stringify({
       model: provider.generationModel,
       prompt,
-      size: "1024x1024"
+      size: provider.generationSize
     })
   });
 }
