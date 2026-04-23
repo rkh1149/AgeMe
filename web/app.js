@@ -400,6 +400,7 @@ async function generateImage() {
   const params = buildParams();
   const hasPromptOverride = typeof params.prompt_override === "string" && params.prompt_override.length > 0;
   const overrideUsesPhoto = hasPromptOverride && params.override_use_photo;
+  const usesChatGptImages2 = params.provider === "dalle2";
 
   if (!hasPromptOverride && !uploadFile) {
     setStatus("Please choose a photo first.");
@@ -427,18 +428,33 @@ async function generateImage() {
     payload.append("params", JSON.stringify(params));
 
     let maskFile = null;
+    let sentImageFile = null;
     if (hasPromptOverride && !overrideUsesPhoto) {
       state.uploadMaskFile = null;
     } else if (hasPromptOverride && overrideUsesPhoto) {
-      maskFile = await buildFullImageMaskFile(uploadFile);
-      state.uploadMaskFile = maskFile;
-      payload.append("image", uploadFile, uploadFile.name);
-      payload.append("mask", maskFile, maskFile.name);
+      if (usesChatGptImages2) {
+        state.uploadMaskFile = null;
+        sentImageFile = state.sourceFile;
+        payload.append("image", sentImageFile, sentImageFile.name);
+      } else {
+        maskFile = await buildFullImageMaskFile(uploadFile);
+        sentImageFile = uploadFile;
+        state.uploadMaskFile = maskFile;
+        payload.append("image", sentImageFile, sentImageFile.name);
+        payload.append("mask", maskFile, maskFile.name);
+      }
     } else {
-      maskFile = await buildEditMaskFile(uploadFile, params);
-      state.uploadMaskFile = maskFile;
-      payload.append("image", uploadFile, uploadFile.name);
-      payload.append("mask", maskFile, maskFile.name);
+      if (usesChatGptImages2) {
+        state.uploadMaskFile = null;
+        sentImageFile = state.sourceFile;
+        payload.append("image", sentImageFile, sentImageFile.name);
+      } else {
+        maskFile = await buildEditMaskFile(uploadFile, params);
+        sentImageFile = uploadFile;
+        state.uploadMaskFile = maskFile;
+        payload.append("image", sentImageFile, sentImageFile.name);
+        payload.append("mask", maskFile, maskFile.name);
+      }
     }
 
     if (debugEnabled) {
@@ -447,7 +463,7 @@ async function generateImage() {
         mode: hasPromptOverride
           ? (overrideUsesPhoto ? "prompt_override_photo_edit" : "prompt_override_generation")
           : "guided_edit",
-        client: buildClientDebug(params, uploadFile || null, maskFile)
+        client: buildClientDebug(params, sentImageFile, maskFile)
       });
     }
 

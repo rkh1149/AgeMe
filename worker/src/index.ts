@@ -25,6 +25,7 @@ interface AgeParams {
 }
 
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+const GPT_IMAGE_MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const OPENAI_IMAGE_EDITS_URL = "https://api.openai.com/v1/images/edits";
 const OPENAI_IMAGE_GENERATIONS_URL = "https://api.openai.com/v1/images/generations";
 const PROBE_PNG_BASE64 =
@@ -33,13 +34,13 @@ const PROVIDERS: Record<ProviderId, { id: ProviderId; label: string; editModel: 
   dalle2: {
     id: "dalle2",
     label: "CHATGPT Images 2.0",
-    editModel: "dall-e-2",
+    editModel: "gpt-image-2",
     generationModel: "gpt-image-2",
     generationSize: "1024x1536",
     endpoint: OPENAI_IMAGE_EDITS_URL,
-    inputMimeTypes: ["image/png"],
-    maxImageBytes: MAX_IMAGE_BYTES,
-    supportsMask: true
+    inputMimeTypes: ["image/jpeg", "image/png", "image/webp"],
+    maxImageBytes: GPT_IMAGE_MAX_IMAGE_BYTES,
+    supportsMask: false
   },
   gptimage1: {
     id: "gptimage1",
@@ -453,7 +454,9 @@ async function handleCapabilitiesRequest(url: URL, env: Env, corsHeaders: Header
     constraints: {
       supported_input_mime_types: provider.inputMimeTypes,
       accepted_params_for_upstream: {
-        guided_edit: ["model", "prompt", "image", "mask", "size", "response_format"],
+        guided_edit: provider.editModel === "gpt-image-2"
+          ? ["model", "prompt", "image"]
+          : ["model", "prompt", "image", "mask", "size", "response_format"],
         prompt_override_generation: ["model", "prompt", "size"]
       },
       rejected_param_examples: ["quality"],
@@ -692,7 +695,7 @@ function getProvider(id: ProviderId) {
   return PROVIDERS[id];
 }
 
-function shouldFallbackToDalle2(provider: { id: ProviderId; model: string }, openAiBody: Record<string, unknown>): boolean {
+function shouldFallbackToDalle2(provider: { id: ProviderId }, openAiBody: Record<string, unknown>): boolean {
   if (provider.id === "dalle2") return false;
   const err = extractOpenAiErrorDetails(openAiBody);
   if (!err) return false;
@@ -710,6 +713,17 @@ async function callOpenAiEdits(
   form.append("model", provider.editModel);
   form.append("prompt", prompt);
   form.append("image", image, image.name || "input.png");
+
+  if (provider.editModel === "gpt-image-2") {
+    return fetch(provider.endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: form
+    });
+  }
+
   if (maskFile && provider.supportsMask) {
     form.append("mask", maskFile, maskFile.name || "mask.png");
   }
