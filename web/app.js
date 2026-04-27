@@ -167,8 +167,7 @@ async function normalizeUploadImage(file) {
 
 async function normalizeChatGptImages2Upload(file) {
   const image = await loadImageFromObjectUrl(file);
-  const maxEdges = [2048, 1536, 1024];
-  const qualities = [0.92, 0.86, 0.8];
+  const maxEdges = [1536, 1280, 1024];
 
   for (const maxEdge of maxEdges) {
     const scale = Math.min(1, maxEdge / Math.max(image.width, image.height));
@@ -184,18 +183,27 @@ async function normalizeChatGptImages2Upload(file) {
       throw new Error("Could not prepare image for ChatGPT Images 2.0.");
     }
 
-    // Flatten the image to a standard RGB JPEG to avoid upstream mode issues.
+    // Re-encode through canvas to strip metadata/color profile issues that can
+    // make upstream image parsers reject otherwise valid uploads.
     context.fillStyle = "#ffffff";
     context.fillRect(0, 0, targetWidth, targetHeight);
     context.drawImage(image, 0, 0, targetWidth, targetHeight);
 
-    for (const quality of qualities) {
-      const blob = await canvasToJpegBlob(canvas, quality);
-      if (blob.size <= MAX_GPT_IMAGE_UPLOAD_BYTES) {
+    const pngBlob = await canvasToPngBlob(canvas);
+    if (pngBlob.size <= MAX_GPT_IMAGE_UPLOAD_BYTES) {
+      const normalizedName = (file.name || "upload")
+        .replace(/\.[a-z0-9]+$/i, "")
+        .concat(".png");
+      return new File([pngBlob], normalizedName, { type: "image/png" });
+    }
+
+    for (const quality of [0.9, 0.82, 0.74]) {
+      const jpegBlob = await canvasToJpegBlob(canvas, quality);
+      if (jpegBlob.size <= MAX_GPT_IMAGE_UPLOAD_BYTES) {
         const normalizedName = (file.name || "upload")
           .replace(/\.[a-z0-9]+$/i, "")
           .concat(".jpg");
-        return new File([blob], normalizedName, { type: "image/jpeg" });
+        return new File([jpegBlob], normalizedName, { type: "image/jpeg" });
       }
     }
   }
