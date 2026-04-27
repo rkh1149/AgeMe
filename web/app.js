@@ -41,6 +41,7 @@ const state = {
   lastDebugInfo: null
 };
 const MAX_UPSTREAM_IMAGE_BYTES = 4 * 1024 * 1024;
+const MAX_GPT_IMAGE_UPLOAD_BYTES = 8 * 1024 * 1024;
 
 function isDebugEnabled() {
   return Boolean(controls.debugMode?.checked);
@@ -162,6 +163,44 @@ async function normalizeUploadImage(file) {
     .concat(".png");
 
   return new File([blob], normalizedName, { type: "image/png" });
+}
+
+async function normalizeChatGptImages2Upload(file) {
+  const image = await loadImageFromObjectUrl(file);
+  const maxEdges = [2048, 1536, 1024];
+  const qualities = [0.92, 0.86, 0.8];
+
+  for (const maxEdge of maxEdges) {
+    const scale = Math.min(1, maxEdge / Math.max(image.width, image.height));
+    const targetWidth = Math.max(1, Math.round(image.width * scale));
+    const targetHeight = Math.max(1, Math.round(image.height * scale));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("Could not prepare image for ChatGPT Images 2.0.");
+    }
+
+    // Flatten the image to a standard RGB JPEG to avoid upstream mode issues.
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, targetWidth, targetHeight);
+    context.drawImage(image, 0, 0, targetWidth, targetHeight);
+
+    for (const quality of qualities) {
+      const blob = await canvasToJpegBlob(canvas, quality);
+      if (blob.size <= MAX_GPT_IMAGE_UPLOAD_BYTES) {
+        const normalizedName = (file.name || "upload")
+          .replace(/\.[a-z0-9]+$/i, "")
+          .concat(".jpg");
+        return new File([blob], normalizedName, { type: "image/jpeg" });
+      }
+    }
+  }
+
+  throw new Error("Prepared image is larger than 8 MB. Please use a smaller photo.");
 }
 
 function punchTransparentRect(ctx, x, y, w, h) {
@@ -434,7 +473,7 @@ async function generateImage() {
     } else if (hasPromptOverride && overrideUsesPhoto) {
       if (usesChatGptImages2) {
         state.uploadMaskFile = null;
-        sentImageFile = state.sourceFile;
+        sentImageFile = await normalizeChatGptImages2Upload(state.sourceFile);
         payload.append("image", sentImageFile, sentImageFile.name);
       } else {
         maskFile = await buildFullImageMaskFile(uploadFile);
@@ -446,7 +485,7 @@ async function generateImage() {
     } else {
       if (usesChatGptImages2) {
         state.uploadMaskFile = null;
-        sentImageFile = state.sourceFile;
+        sentImageFile = await normalizeChatGptImages2Upload(state.sourceFile);
         payload.append("image", sentImageFile, sentImageFile.name);
       } else {
         maskFile = await buildEditMaskFile(uploadFile, params);
