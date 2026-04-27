@@ -447,7 +447,7 @@ async function generateImage() {
   const params = buildParams();
   const hasPromptOverride = typeof params.prompt_override === "string" && params.prompt_override.length > 0;
   const overrideUsesPhoto = hasPromptOverride && params.override_use_photo;
-  const usesChatGptImages2 = params.provider === "dalle2";
+  const usesChatGptImages2 = params.provider === "chatgptimage2";
 
   if (!hasPromptOverride && !uploadFile) {
     setStatus("Please choose a photo first.");

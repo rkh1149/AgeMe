@@ -8,7 +8,7 @@ interface Env {
 type Quality = "low" | "medium" | "high";
 type HairColor = "preserve" | "black" | "brown" | "blonde" | "red" | "gray" | "white";
 type Glasses = "preserve" | "add" | "remove";
-type ProviderId = "dalle2" | "gptimage1";
+type ProviderId = "chatgptimage2" | "gptimage1";
 
 interface AgeParams {
   age_delta: number;
@@ -32,8 +32,8 @@ const OPENAI_IMAGE_GENERATIONS_URL = "https://api.openai.com/v1/images/generatio
 const PROBE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Zb+0AAAAASUVORK5CYII=";
 const PROVIDERS: Record<ProviderId, { id: ProviderId; label: string; editModel: string; generationModel: string; generationSize: string; endpoint: string; inputMimeTypes: string[]; maxImageBytes: number; supportsMask: boolean }> = {
-  dalle2: {
-    id: "dalle2",
+  chatgptimage2: {
+    id: "chatgptimage2",
     label: "CHATGPT Images 2.0",
     editModel: "gpt-image-2",
     generationModel: "gpt-image-2",
@@ -131,8 +131,8 @@ export default {
         let openAiBody = (await openAiResponse.json()) as Record<string, unknown>;
         let usedFallbackProvider = false;
 
-        if (!openAiResponse.ok && shouldFallbackToDalle2(selectedProvider, openAiBody)) {
-          selectedProvider = getProvider("dalle2");
+        if (!openAiResponse.ok && shouldFallbackToPrimaryProvider(selectedProvider, openAiBody)) {
+          selectedProvider = getProvider("chatgptimage2");
           openAiResponse = await callOpenAiGenerations(env.OPENAI_API_KEY, env.OPENAI_ORG_ID, selectedProvider, prompt);
           openAiBody = (await openAiResponse.json()) as Record<string, unknown>;
           usedFallbackProvider = true;
@@ -301,8 +301,8 @@ export default {
       let openAiBody = (await openAiResponse.json()) as Record<string, unknown>;
       let usedFallbackProvider = false;
 
-      if (!openAiResponse.ok && shouldFallbackToDalle2(selectedProvider, openAiBody)) {
-        selectedProvider = getProvider("dalle2");
+      if (!openAiResponse.ok && shouldFallbackToPrimaryProvider(selectedProvider, openAiBody)) {
+        selectedProvider = getProvider("chatgptimage2");
         openAiResponse = await callOpenAiEdits(env.OPENAI_API_KEY, env.OPENAI_ORG_ID, selectedProvider, prompt, image, maskFile);
         openAiBody = (await openAiResponse.json()) as Record<string, unknown>;
         usedFallbackProvider = true;
@@ -684,9 +684,12 @@ function optionalBoolean(value: unknown, fallback: boolean, key: string): boolea
   return value;
 }
 
-function resolveProviderId(value: string | null | undefined, fallback: ProviderId = "dalle2"): ProviderId {
-  if (value === "dalle2" || value === "gptimage1") {
+function resolveProviderId(value: string | null | undefined, fallback: ProviderId = "chatgptimage2"): ProviderId {
+  if (value === "chatgptimage2" || value === "gptimage1") {
     return value;
+  }
+  if (value === "dalle2") {
+    return "chatgptimage2";
   }
   return fallback;
 }
@@ -708,8 +711,8 @@ function buildOpenAiHeaders(apiKey: string, orgId?: string, isJson = false): Hea
   return headers;
 }
 
-function shouldFallbackToDalle2(provider: { id: ProviderId }, openAiBody: Record<string, unknown>): boolean {
-  if (provider.id === "dalle2") return false;
+function shouldFallbackToPrimaryProvider(provider: { id: ProviderId }, openAiBody: Record<string, unknown>): boolean {
+  if (provider.id === "chatgptimage2") return false;
   const err = extractOpenAiErrorDetails(openAiBody);
   if (!err) return false;
   return err.param === "model" && err.code === "invalid_value";
