@@ -1,5 +1,6 @@
 interface Env {
   OPENAI_API_KEY: string;
+  OPENAI_ORG_ID?: string;
   CORS_ORIGIN?: string;
   DEFAULT_PROVIDER?: string;
 }
@@ -126,13 +127,13 @@ export default {
       if (params.prompt_override && !params.override_use_photo) {
         const inputDebug = buildInputDebug(debugImage, params, debugMask);
         let selectedProvider = provider;
-        let openAiResponse = await callOpenAiGenerations(env.OPENAI_API_KEY, selectedProvider, prompt);
+        let openAiResponse = await callOpenAiGenerations(env.OPENAI_API_KEY, env.OPENAI_ORG_ID, selectedProvider, prompt);
         let openAiBody = (await openAiResponse.json()) as Record<string, unknown>;
         let usedFallbackProvider = false;
 
         if (!openAiResponse.ok && shouldFallbackToDalle2(selectedProvider, openAiBody)) {
           selectedProvider = getProvider("dalle2");
-          openAiResponse = await callOpenAiGenerations(env.OPENAI_API_KEY, selectedProvider, prompt);
+          openAiResponse = await callOpenAiGenerations(env.OPENAI_API_KEY, env.OPENAI_ORG_ID, selectedProvider, prompt);
           openAiBody = (await openAiResponse.json()) as Record<string, unknown>;
           usedFallbackProvider = true;
         }
@@ -296,13 +297,13 @@ export default {
 
       const inputDebug = buildInputDebug(image, params, maskFile);
       let selectedProvider = provider;
-      let openAiResponse = await callOpenAiEdits(env.OPENAI_API_KEY, selectedProvider, prompt, image, maskFile);
+      let openAiResponse = await callOpenAiEdits(env.OPENAI_API_KEY, env.OPENAI_ORG_ID, selectedProvider, prompt, image, maskFile);
       let openAiBody = (await openAiResponse.json()) as Record<string, unknown>;
       let usedFallbackProvider = false;
 
       if (!openAiResponse.ok && shouldFallbackToDalle2(selectedProvider, openAiBody)) {
         selectedProvider = getProvider("dalle2");
-        openAiResponse = await callOpenAiEdits(env.OPENAI_API_KEY, selectedProvider, prompt, image, maskFile);
+        openAiResponse = await callOpenAiEdits(env.OPENAI_API_KEY, env.OPENAI_ORG_ID, selectedProvider, prompt, image, maskFile);
         openAiBody = (await openAiResponse.json()) as Record<string, unknown>;
         usedFallbackProvider = true;
       }
@@ -434,7 +435,8 @@ async function handleCapabilitiesRequest(url: URL, env: Env, corsHeaders: Header
       generations_endpoint: OPENAI_IMAGE_GENERATIONS_URL,
       edit_model: provider.editModel,
       generation_model: provider.generationModel,
-      generation_size: provider.generationSize
+      generation_size: provider.generationSize,
+      organization_configured: Boolean(env.OPENAI_ORG_ID)
     },
     provider: {
       selected: provider.id,
@@ -497,9 +499,7 @@ async function handleCapabilitiesRequest(url: URL, env: Env, corsHeaders: Header
 
   const probeResponse = await fetch(provider.endpoint, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${env.OPENAI_API_KEY}`
-    },
+    headers: buildOpenAiHeaders(env.OPENAI_API_KEY, env.OPENAI_ORG_ID),
     body: probeForm
   });
 
@@ -695,6 +695,19 @@ function getProvider(id: ProviderId) {
   return PROVIDERS[id];
 }
 
+function buildOpenAiHeaders(apiKey: string, orgId?: string, isJson = false): HeadersInit {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${apiKey}`
+  };
+  if (orgId) {
+    headers["OpenAI-Organization"] = orgId;
+  }
+  if (isJson) {
+    headers["Content-Type"] = "application/json";
+  }
+  return headers;
+}
+
 function shouldFallbackToDalle2(provider: { id: ProviderId }, openAiBody: Record<string, unknown>): boolean {
   if (provider.id === "dalle2") return false;
   const err = extractOpenAiErrorDetails(openAiBody);
@@ -704,6 +717,7 @@ function shouldFallbackToDalle2(provider: { id: ProviderId }, openAiBody: Record
 
 async function callOpenAiEdits(
   apiKey: string,
+  orgId: string | undefined,
   provider: { editModel: string; endpoint: string; supportsMask: boolean },
   prompt: string,
   image: File,
@@ -717,9 +731,7 @@ async function callOpenAiEdits(
   if (provider.editModel === "gpt-image-2") {
     return fetch(provider.endpoint, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`
-      },
+      headers: buildOpenAiHeaders(apiKey, orgId),
       body: form
     });
   }
@@ -732,24 +744,20 @@ async function callOpenAiEdits(
 
   return fetch(provider.endpoint, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`
-    },
+    headers: buildOpenAiHeaders(apiKey, orgId),
     body: form
   });
 }
 
 async function callOpenAiGenerations(
   apiKey: string,
+  orgId: string | undefined,
   provider: { generationModel: string; generationSize: string },
   prompt: string
 ): Promise<Response> {
   return fetch(OPENAI_IMAGE_GENERATIONS_URL, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
-    },
+    headers: buildOpenAiHeaders(apiKey, orgId, true),
     body: JSON.stringify({
       model: provider.generationModel,
       prompt,
